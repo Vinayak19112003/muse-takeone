@@ -558,9 +558,21 @@ program
     }
     try {
       const { resolveExecutablePath } = await import("./browser.js");
+      const { existsSync: existsSync2 } = await import("node:fs");
       const envPath = process.env.TAKEONE_CHROMIUM_PATH;
       const p = resolveExecutablePath({ headless: true } as never);
-      lines.push({ ok: true, label: "chromium (renderer)", detail: `${p}${envPath ? " (TAKEONE_CHROMIUM_PATH)" : ""}` });
+      if (p) {
+        lines.push({ ok: true, label: "chromium (renderer)", detail: `${p}${envPath ? " (TAKEONE_CHROMIUM_PATH)" : ""}` });
+      } else {
+        // No pinned binary: the render falls back to Playwright-managed Chromium.
+        const { chromium } = await import("playwright");
+        const managed = chromium.executablePath();
+        if (managed && existsSync2(managed)) {
+          lines.push({ ok: true, label: "chromium (renderer)", detail: `${managed} (Playwright-managed)` });
+        } else {
+          lines.push({ ok: false, label: "chromium (renderer)", detail: "no pinned binary and Playwright-managed Chromium is not installed — set TAKEONE_CHROMIUM_PATH or run setup" });
+        }
+      }
     } catch (e) {
       lines.push({ ok: false, label: "chromium (renderer)", detail: `${(e as Error).message} — set TAKEONE_CHROMIUM_PATH or run setup` });
     }
