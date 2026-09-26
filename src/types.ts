@@ -329,6 +329,28 @@ export interface CameraShot {
 
 export type RecordingMode = "native" | "reconstructed";
 
+/**
+ * Where reconstruction screenshots were captured. This is provenance metadata only:
+ * TakeOne cannot cryptographically prove a PNG's source, but recording it here makes
+ * an accidental capture fallback detectable in the manifest and in agent logs.
+ *
+ * "muse-managed-browser": Muse's currently active managed/main browser session, with
+ * its real cookies, login state and page state. This is the default capture source
+ * for the Muse reconstruction workflow: footage must come from the browser Muse is
+ * already driving, never from a fresh browser launched to recreate the page.
+ * "external-browser": some other browser session the operator controls.
+ * "manual-screenshots": screenshots captured by hand or by an unknown pipeline.
+ */
+export type ReconstructionSourceType = "muse-managed-browser" | "external-browser" | "manual-screenshots";
+
+export interface ReconstructionSource {
+  type: ReconstructionSourceType;
+  /** Which session the screenshots came from, e.g. "main". */
+  session?: string;
+  /** Free-form note, e.g. how the screenshots were materialized. */
+  note?: string;
+}
+
 export interface RecordingManifest {
   version: 1;
   /**
@@ -338,6 +360,12 @@ export interface RecordingManifest {
    * settled shots that each cover several related interactions.
    */
   mode?: RecordingMode;
+  /**
+   * Capture provenance for reconstructed recordings. Preserved verbatim from the
+   * reconstruction input; never affects rendering, only documents where the
+   * screenshots came from.
+   */
+  source?: ReconstructionSource;
   createdAt: string;
   config: ScenarioConfig;
   /** CSS viewport size the page was rendered at. */

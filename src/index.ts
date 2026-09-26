@@ -38,6 +38,7 @@ export {
 export {
   buildReconstructionManifest,
   writeReconstructionDir,
+  RECONSTRUCTION_SOURCE_TYPES,
   type ReconstructionInput,
   type ReconstructionFrame,
   type ReconstructionAction,

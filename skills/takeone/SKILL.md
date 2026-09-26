@@ -180,10 +180,37 @@ takeone cannot capture the browser Muse drives (no CDP or attach access), so foo
 npx takeone reconstruct input.json -o video.mp4
 ```
 
-1. **Capture one real screenshot per stage** in the managed browser, in order. Each shot must be settled (no spinners, no half-open menus).
-2. **Ground every click target** on its screenshot before moving on (visual grounding gives normalized 0-1000 coordinates; convert to pixels: `px = x/1000*W`). Guessed coordinates are the main source of bad reconstructions.
-3. **Remove the baked-in OS cursor** from each screenshot (a ~44px box around the located cursor), or the video shows two cursors.
-4. **Write the input JSON** and run `takeone reconstruct`.
+### Muse managed-browser capture source — hard rule
+
+The capture source is **the browser Muse is already driving**. This is not a recommendation; violating it produces a video of the wrong session (e.g. a signed-out page when the real session was logged in).
+
+1. **Use the browser Muse is already driving.** Perform the real workflow there — real clicks, real typing, real page state.
+2. **Screenshots must come from that exact browser**: its logged-in state, cookies, account avatar, private pages, scroll position, dialogs, current tab, theme — whatever is actually visible.
+3. **Never launch another browser to obtain footage.** Not Playwright, not Puppeteer, not a headless Chromium, not TakeOne's recording browser, not a CDP-attached temporary browser, not a fresh unauthenticated browser — for the capture stage. TakeOne's own Chromium is allowed for **rendering only**.
+4. **Do not recreate login/session state in TakeOne.** No copying cookies into a fresh browser, no logging in elsewhere, no opening the same URL separately. The footage source is the actual managed session.
+5. **Ground click coordinates against screenshots from that browser.** Grounded on a different browser's screenshot, the coordinates land on the wrong pixels.
+6. **If the managed browser cannot export a screenshot to disk**, use the supported Muse/browser mechanism to retrieve/materialize it (browser task screenshots persist to disk; copy them to your frames dir before they are pruned). **Do not switch browsers as a shortcut.**
+7. **If screenshot extraction is genuinely impossible, stop and report it.** Never silently substitute another browser.
+8. **Fallback browser only with the user's explicit approval** — and if it happens, describe the footage accurately ("captured in a fallback browser"), never "captured from the Muse managed browser".
+
+Separate the three stages in your head: **CAPTURE** (managed browser: real screenshots, real coordinates, real UI states) → **RECONSTRUCTION** (takeone: manifest, timeline, synthetic cursor, camera shots, captions) → **RENDER** (TakeOne's compositor Chromium: renders already-captured screenshots; it never browses the target site or reproduces the session).
+
+### Capture workflow
+
+Perform the action in the main browser, wait for the UI to settle, capture the actual state, record the coordinates, continue:
+
+```
+Muse opens GitHub in the main managed browser (logged in, avatar visible)
+  → capture 01
+Muse clicks the repository link
+  → wait for the page to settle → capture 02, ground the click point on 01
+Muse clicks src/
+  → wait for settle → capture 03, ground the click point on 02
+...
+build input.json → takeone reconstruct → compositor renders the MP4
+```
+
+For every action that changes the UI, capture **before** (pre-action state) and **after** (settled result): Follow → Following, Like → Liked, menu button → menu open, open repository → repository page. Never capture mid-animation unless the animation itself is the point. The resulting video must reflect the managed session — if GitHub is logged in there, the video shows the avatar and no "Sign in / Sign up" buttons.
 
 ### Input format
 
@@ -191,6 +218,7 @@ npx takeone reconstruct input.json -o video.mp4
 {
   "viewport": { "width": 1919, "height": 992 },
   "screenshotsDir": "frames",
+  "source": { "type": "muse-managed-browser", "session": "main" },
   "frames": [
     {
       "file": "01-open.png",
@@ -210,6 +238,7 @@ npx takeone reconstruct input.json -o video.mp4
 }
 ```
 
+- `source.type` is provenance metadata: `muse-managed-browser` (the managed session — the default for this workflow), `external-browser`, or `manual-screenshots`. It is preserved verbatim in the generated manifest and never affects rendering. Run with `--require-source muse-managed-browser` to make an accidental capture fallback fail loudly instead of silently producing a video from the wrong session.
 - `actions` run in order while the frame is up. The cursor glides along an eased curved path to each target, clicks (mousedown/mouseup), or types.
 - `holdMs` is how long the screenshot stays before the next cut. If the actions take longer, the frame extends automatically.
 - Captions are source-time ranges drawn as a fixed pill, unaffected by the camera.
@@ -229,7 +258,7 @@ This is automatic from the action points: no manual zoom keyframes needed. Calme
 
 ### Things that cost time if you don't know them
 
-- **Describe the result honestly**: "reconstructed from real screenshots" (real frames, rebuilt cursor path) — never "a captured live recording".
+- **Describe the result honestly**: "reconstructed from real screenshots" (real frames, rebuilt cursor path) — never "a captured live recording". And say which browser the screenshots came from: if a fallback browser was ever used, name it; never call fallback screenshots "captured from the Muse managed browser".
 - **Settle the page before each screenshot.** A screenshot taken mid-animation bakes the animation into a still; the crossfade then looks like a glitch.
 - **One UI state per screenshot.** If a click changes the page, the next screenshot must show the changed page; don't reuse the pre-click shot after the click.
 - **Chromium for rendering.** The compositor needs headless Chromium: `TAKEONE_CHROMIUM_PATH=/opt/meta-chromium/chrome npx takeone reconstruct …` avoids the 650MB Playwright download when a system Chrome exists.

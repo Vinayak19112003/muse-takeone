@@ -197,3 +197,123 @@ describe("G: camera durations are output-time under time-lapse", () => {
     assert.ok(mid.scale > 1.01 && mid.scale < move.target.scale, `mid-move scale ${mid.scale.toFixed(3)} should be between 1 and target`);
   });
 });
+
+/**
+ * Cases H–K: capture-source provenance.
+ *
+ * H: input.source is preserved verbatim in the generated manifest.
+ * I: --require-source fails clearly when the input source does not match (or is missing).
+ * J: no source metadata at all stays backwards compatible.
+ * K: source metadata never changes rendering output: identical screenshots/actions
+ *    with different source metadata plan identical frame instructions.
+ */
+import { mkdtempSync, mkdirSync, copyFileSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  buildReconstructionManifest,
+  writeReconstructionDir,
+  type ReconstructionInput,
+} from "../src/reconstruct/build.js";
+
+function makeReconstructionInput(source?: ReconstructionInput["source"]): ReconstructionInput {
+  return {
+    viewport: { width: 1280, height: 800 },
+    screenshotsDir: "shots",
+    source,
+    frames: [
+      { file: "a.png", holdMs: 2000, actions: [{ kind: "click", x: 640, y: 400 }], caption: "tour" },
+      { file: "b.png", holdMs: 2000 },
+    ],
+  };
+}
+
+/** Materialize two tiny screenshots so writeReconstructionDir has real files to copy. */
+function materializeShots(dir: string): void {
+  const fixture = join(import.meta.dirname, "fixtures", "qa", "frames");
+  mkdirSync(join(dir, "shots"), { recursive: true });
+  copyFileSync(join(fixture, "01-post.png"), join(dir, "shots", "a.png"));
+  copyFileSync(join(fixture, "02-liked.png"), join(dir, "shots", "b.png"));
+}
+
+describe("H: manifest preserves input.source", () => {
+  it("muse-managed-browser provenance survives into manifest.json on disk", () => {
+    const base = mkdtempSync(join(tmpdir(), "takeone-src-h-"));
+    materializeShots(base);
+    const input = makeReconstructionInput({ type: "muse-managed-browser", session: "main" });
+    const { workDir } = writeReconstructionDir({ input, baseDir: base, workDir: join(base, "work") });
+    const onDisk = JSON.parse(readFileSync(join(workDir, "manifest.json"), "utf8"));
+    assert.deepEqual(onDisk.source, { type: "muse-managed-browser", session: "main" });
+  });
+});
+
+describe("I: --require-source enforcement", () => {
+  it("fails clearly when the input source does not match", () => {
+    const base = mkdtempSync(join(tmpdir(), "takeone-src-i-"));
+    materializeShots(base);
+    const input = makeReconstructionInput({ type: "external-browser" });
+    assert.throws(
+      () => writeReconstructionDir({ input, baseDir: base, workDir: join(base, "work"), requireSource: "muse-managed-browser" }),
+      /--require-source muse-managed-browser but the input claims source "external-browser"/,
+    );
+  });
+  it("fails clearly when the input has no source at all", () => {
+    const base = mkdtempSync(join(tmpdir(), "takeone-src-i2-"));
+    materializeShots(base);
+    const input = makeReconstructionInput(undefined);
+    assert.throws(
+      () => writeReconstructionDir({ input, baseDir: base, workDir: join(base, "work"), requireSource: "muse-managed-browser" }),
+      /claims source \(none\)/,
+    );
+  });
+  it("rejects an unknown required source type", () => {
+    const base = mkdtempSync(join(tmpdir(), "takeone-src-i3-"));
+    materializeShots(base);
+    const input = makeReconstructionInput({ type: "muse-managed-browser" });
+    assert.throws(
+      () => writeReconstructionDir({ input, baseDir: base, workDir: join(base, "work"), requireSource: "managed-browser" as any }),
+      /not a known source type/,
+    );
+  });
+});
+
+describe("J: backwards compatibility", () => {
+  it("input without source and without requireSource still builds; manifest.source is undefined", () => {
+    const base = mkdtempSync(join(tmpdir(), "takeone-src-j-"));
+    materializeShots(base);
+    const { manifest } = writeReconstructionDir({ input: makeReconstructionInput(undefined), baseDir: base, workDir: join(base, "work") });
+    assert.equal(manifest.source, undefined);
+    assert.equal(manifest.frames.length, 2);
+  });
+  it("matching requireSource passes and preserves the source", () => {
+    const base = mkdtempSync(join(tmpdir(), "takeone-src-j2-"));
+    materializeShots(base);
+    const { manifest } = writeReconstructionDir({
+      input: makeReconstructionInput({ type: "muse-managed-browser", session: "main" }),
+      baseDir: base,
+      workDir: join(base, "work"),
+      requireSource: "muse-managed-browser",
+    });
+    assert.deepEqual(manifest.source, { type: "muse-managed-browser", session: "main" });
+  });
+});
+
+describe("K: source metadata does not change rendering", () => {
+  it("identical frames/actions with different source metadata plan identical output", () => {
+    const a = buildReconstructionManifest(makeReconstructionInput({ type: "muse-managed-browser", session: "main" }), cfg);
+    const b = buildReconstructionManifest(makeReconstructionInput({ type: "manual-screenshots" }), cfg);
+    const c = buildReconstructionManifest(makeReconstructionInput(undefined), cfg);
+    for (const [x, y] of [[a, b], [a, c]] as const) {
+      const strip = (m: typeof a) => {
+        const { source: _s, createdAt: _c, ...rest } = m as any;
+        return rest;
+      };
+      assert.deepEqual(strip(x), strip(y), "manifests must differ only in source/createdAt");
+      // Every pure-function stage of the render pipeline must see no difference:
+      // the shot plan (camera keys), the output-time mapping, and the cursor stream.
+      assert.deepEqual(planCameraKeys(x, cfg), planCameraKeys(y, cfg), "camera keys must be identical regardless of source");
+      assert.deepEqual(buildTimeline(x, cfg), buildTimeline(y, cfg), "output timeline must be identical regardless of source");
+      assert.deepEqual(extractCursor(x.events), extractCursor(y.events), "cursor stream must be identical regardless of source");
+    }
+  });
+});

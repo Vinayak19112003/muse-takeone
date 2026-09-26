@@ -395,7 +395,8 @@ sharedOpts(
     .option("-o, --out <file>", "output video file (default <input-dir>/reconstruct-output.mp4)")
     .option("--work-dir <dir>", "working directory for manifest + copied frames (default <input-dir>/.reconstruct)")
     .option("--keep-work-dir", "do not delete the working directory after rendering")
-    .option("--no-contact-sheet", "skip the keyframe sheet"),
+    .option("--no-contact-sheet", "skip the keyframe sheet")
+    .option("--require-source <type>", "fail unless input.source.type matches (muse-managed-browser | external-browser | manual-screenshots)"),
 ).action(async (inputFile: string, o) => {
   const { rmSync } = await import("node:fs");
   const inputPath = resolve(inputFile);
@@ -403,7 +404,7 @@ sharedOpts(
   const baseDir = dirname(inputPath);
   const workDir = resolve(o.workDir ?? join(baseDir, ".reconstruct"));
   try {
-    const { manifest } = writeReconstructionDir({ input, baseDir, workDir, config: parseOverrides(o), log });
+    const { manifest } = writeReconstructionDir({ input, baseDir, workDir, config: parseOverrides(o), requireSource: o.requireSource, log });
     const outFile = resolve(o.out ?? join(baseDir, "reconstruct-output.mp4"));
     const res = await renderRecording({ recordingDir: workDir, outFile, config: parseOverrides(o), contactSheet: o.contactSheet, log, onProgress: progress });
     console.log(JSON.stringify({ video: res.outFile, keyframes: res.contactSheet, durationMs: res.durationMs, frames: manifest.frames.length }, null, 2));
