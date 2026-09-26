@@ -25,15 +25,6 @@ export function cameraBusyWindows(keys: CameraKeyframe[], margin = 120): [number
     .sort((a, b) => a[0] - b[0]);
 }
 
-/** True when [a, b] overlaps any protected window. */
-function overlapsAny(a: number, b: number, windows: [number, number][]): boolean {
-  for (const [w0, w1] of windows) {
-    if (w1 <= a) continue;
-    if (w0 >= b) break;
-    return true;
-  }
-  return false;
-}
 
 /**
  * Piece of source time with the rate it plays at: `rate` 1 is real time, higher is faster.

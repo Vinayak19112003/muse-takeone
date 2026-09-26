@@ -12,7 +12,7 @@
  * and only moves again when the next important target leaves the shot's useful visual
  * region. No automatic return to 1x between nearby interactions.
  */
-import type { CameraShot, CameraTarget, Easing, Point, RecordingManifest, ScenarioConfig } from "../types.js";
+import type { CameraShot, CameraTarget, Easing, RecordingManifest, ScenarioConfig } from "../types.js";
 import { clamp } from "../motion.js";
 import type { CameraKeyframe } from "../compositor/plan.js";
 

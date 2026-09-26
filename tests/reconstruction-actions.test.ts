@@ -397,4 +397,17 @@ describe("writeReconstructionDir", () => {
       /did not come from the expected capture browser/,
     );
   });
+
+  it("W: frame.file cannot escape screenshotsDir via .. or absolute paths", () => {
+    for (const bad of ["../a.png", "..\\a.png", "/etc/passwd", "sub/../../a.png"]) {
+      const v = validateReconstructionInput(baseInput([{ file: bad }]), dir);
+      assert.equal(v.ok, false, bad);
+      assert.match(
+        v.errors.map((e) => e.message).join("\n"),
+        /must stay inside screenshotsDir/,
+      );
+    }
+    const good = validateReconstructionInput(baseInput([{ file: "a.png" }, { file: "b.png" }]), dir);
+    assert.equal(good.ok, true);
+  });
 });

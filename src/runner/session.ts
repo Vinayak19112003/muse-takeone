@@ -6,7 +6,6 @@ import { resolveCursorSpeed } from "../config.js";
 import type { InventoryPage } from "../inventory.js";
 import {
   DEFAULT_INDEX_PATH,
-  addressOf,
   targetOf,
   candidateLocators,
   findEntry,

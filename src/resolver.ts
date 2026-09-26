@@ -462,17 +462,6 @@ async function matchesOf(loc: Locator): Promise<Match[]> {
   return out;
 }
 
-/** Element positions in visual order, for ambiguity messages. */
-async function positionsOf(loc: Locator): Promise<{ x: number; y: number }[]> {
-  const n = await loc.count();
-  const out: { x: number; y: number }[] = [];
-  for (let i = 0; i < n; i++) {
-    const box = await loc.nth(i).boundingBox().catch(() => null);
-    out.push(box ? { x: Math.round(box.x), y: Math.round(box.y) } : { x: -1, y: -1 });
-  }
-  return out;
-}
-
 /**
  * When a lookup fails, take a fresh inventory of the page and suggest the closest
  * live elements. This is what turns a 40s opaque timeout into one line of advice.

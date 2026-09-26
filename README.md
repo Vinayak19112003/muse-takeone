@@ -96,7 +96,7 @@ How it works in detail: [`docs/architecture.md`](docs/architecture.md). Privacy 
 ## Development
 
 ```bash
-npm test          # 41 unit tests (node:test + tsx)
+npm test          # 42 unit tests (node:test + tsx)
 npm run typecheck
 npm run build
 npm run visual-qa # render fixtures, diff contact sheets vs baselines (manual gate)

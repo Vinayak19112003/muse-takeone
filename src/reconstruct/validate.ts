@@ -6,7 +6,7 @@
  * (ignored options, suspicious timing, missing post-action states).
  */
 import { existsSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { basename, isAbsolute, resolve } from "node:path";
 import { RECONSTRUCTION_SOURCE_TYPES } from "./build.js";
 import type { ReconstructionInput } from "./build.js";
 
@@ -112,6 +112,10 @@ export function validateReconstructionInput(input: unknown, baseDir: string): Va
     if (typeof fr.file !== "string" || !fr.file) {
       err(`${where}.file must be a non-empty screenshot file name`);
     } else {
+      const segments = fr.file.split(/[\\/]/);
+      if (isAbsolute(fr.file) || segments.includes("..")) {
+        err(`${where}.file must stay inside screenshotsDir: no absolute paths or ".." segments (got "${fr.file}")`);
+      }
       const base = basename(fr.file);
       if (seenBasenames.has(base)) {
         err(`${where}.file "${fr.file}" has the same base name as frames[${seenBasenames.get(base)}].file: ` +

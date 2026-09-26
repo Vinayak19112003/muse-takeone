@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, statSync } 
 import { dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
-import { resolveExecutablePath, ensureChromium } from "../browser.js";
+import { ensureChromium } from "../browser.js";
 import { resolveConfig } from "../config.js";
 import type { BrowserConfig, UserScenarioConfig } from "../types.js";
 

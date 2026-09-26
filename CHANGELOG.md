@@ -44,9 +44,10 @@ by Atharva Deosthale (MIT); everything below the line is new in the fork.
 
 ### Added — tests, docs, CI
 
-- 27 new unit tests (cases H–V): typing model, timing, scroll/hover/wait,
-  validation, redaction execution, schema round-trip, determinism, unicode,
-  QA, provenance, transitions, `--require-source`.
+- 28 new unit tests (cases H–W): typing model, timing, scroll/hover/wait,
+  validation (including path-traversal rejection), redaction execution, schema
+  round-trip, determinism, unicode, QA, provenance, transitions,
+  `--require-source`.
 - Visual regression fixtures (`tests/fixtures/visual/`: form, scroll, nav)
   with DOM-grounded targets and committed contact-sheet baselines;
   `npm run visual-qa` renders and diffs them (manual gate, not CI).
