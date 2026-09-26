@@ -10,7 +10,11 @@ export const compositorHtml = `<!doctype html>
 </style></head><body><canvas id="c"></canvas><script>
 (() => {
   const canvas = document.getElementById('c');
-  let ctx, W, H, cfg, img = null, imgFile = null;
+  let ctx, W, H, cfg;
+  // Image cache for screenshots. Purely a performance cache: every __render call names
+  // its images explicitly (file + previousFile), so correctness never depends on what a
+  // previous call — or a previous parallel worker — loaded.
+  const imageCache = new Map();
   const arrow = new Path2D('M0 0 L0 17 L4.5 13 L7.5 19.5 L10 18.5 L7 12.5 L12.5 12.5 Z');
   const ARROW_H = 19.5;
 
@@ -35,10 +39,20 @@ export const compositorHtml = `<!doctype html>
   });
   window.__showCanvas = (on) => { canvas.style.display = on ? 'block' : 'none'; };
 
-  window.__loadFrame = (file) => new Promise((resolve, reject) => {
-    if (imgFile === file) return resolve();
+  window.__loadImage = (file) => new Promise((resolve, reject) => {
+    const hit = imageCache.get(file);
+    if (hit) {
+      // Refresh recency for the small LRU cap below.
+      imageCache.delete(file); imageCache.set(file, hit);
+      return resolve(hit);
+    }
     const i = new Image();
-    i.onload = () => { img = i; imgFile = file; resolve(); };
+    i.onload = () => {
+      imageCache.set(file, i);
+      // Bound memory: a blend needs at most the current and previous screenshot.
+      while (imageCache.size > 8) imageCache.delete(imageCache.keys().next().value);
+      resolve(i);
+    };
     i.onerror = () => reject(new Error('frame load failed: ' + file));
     i.src = '/frames/' + file;
   });
@@ -69,16 +83,15 @@ export const compositorHtml = `<!doctype html>
     return shadowLayer;
   }
 
-  // Full frame: load source, draw, and return the encoded image as base64.
-  // Keeps the previously drawn image for the whole MIX_MS blend window so
-  // __draw can crossfade between cuts (not just on the first frame after).
-  let blendImg = null;
+  // Full frame: load sources, draw, and return the encoded image as base64.
+  // Stateless across calls: the outgoing screenshot for a crossfade arrives as
+  // f.previousFile on the instruction itself, so a worker that starts mid-transition
+  // renders the identical blend as one that rendered the earlier frames.
   window.__render = async (f, lossless) => {
-    if (imgFile !== f.file && img) blendImg = img; // stash the outgoing image at a cut
-    await window.__loadFrame(f.file);
-    const blending = f.mix != null && f.mix < 1;
-    window.__draw(f, blending ? blendImg : null);
-    if (!blending) blendImg = null; // release once the blend completes
+    const img = await window.__loadImage(f.file);
+    let prevImg = null;
+    if (f.previousFile && f.mix != null && f.mix < 1) prevImg = await window.__loadImage(f.previousFile);
+    window.__draw(f, img, prevImg);
     const blob = await new Promise((r) => canvas.toBlob(r, lossless ? 'image/png' : 'image/jpeg', 0.95));
     const u = new Uint8Array(await blob.arrayBuffer());
     let bin = '';
@@ -87,7 +100,7 @@ export const compositorHtml = `<!doctype html>
   };
 
   // f: { cam:{px,py,scale}, cursor:{x,y,pressed,visible}, ripples:[{x,y,p}], uiScale, mix }
-  window.__draw = (f, prevImg) => {
+  window.__draw = (f, img, prevImg) => {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
     const C = cfg.content;
