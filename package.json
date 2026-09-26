@@ -1,1 +1,71 @@
-{"author":"Vinayak Deshmuk","bin":{"muse-takeone":"./dist/cli.js","takeone":"./dist/cli.js"},"bugs":{"url":"https://github.com/Vinayak19112003/muse-takeone/issues"},"dependencies":{"commander":"^15.0.0","ffmpeg-static":"^5.3.0","playwright":"^1.63.0","tsx":"^4.23.13"},"description":"Turn workflows performed in Muse's managed browser into polished demo videos: capture real browser states, reconstruct the interaction timeline, render smooth 1080p60 MP4. Built on TakeOne.","devDependencies":{"@types/node":"^26.6.0","ajv":"^8.17.1","typescript":"^7.0.2"},"engines":{"node":">=20"},"exports":{".":{"import":"./dist/index.js","types":"./dist/index.d.ts"}},"files":["dist","!dist/**/*.map","README.md","LICENSE","schema"],"homepage":"https://github.com/Vinayak19112003/muse-takeone#readme","keywords":["muse","screen-recording","browser-automation","ai-agent","video","typescript","ffmpeg","demo-video","cursor","reconstruction"],"license":"MIT","main":"./dist/index.js","name":"muse-takeone","repository":{"type":"git","url":"git+https://github.com/Vinayak19112003/muse-takeone.git"},"scripts":{"build":"tsc -p tsconfig.json","dev":"tsc -p tsconfig.json --watch","prepublishOnly":"npm run build","test":"tsx --test tests/*.test.ts","typecheck":"tsc -p tsconfig.json --noEmit"},"type":"module","types":"./dist/index.d.ts","version":"0.1.0"}
+{
+  "author": "Vinayak Deshmuk",
+  "bin": {
+    "muse-takeone": "./dist/cli.js",
+    "takeone": "./dist/cli.js"
+  },
+  "bugs": {
+    "url": "https://github.com/Vinayak19112003/muse-takeone/issues"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "ffmpeg-static": "^5.3.0",
+    "playwright": "^1.63.0",
+    "tsx": "^4.23.13"
+  },
+  "description": "Turn workflows performed in Muse's managed browser into polished demo videos: capture real browser states, reconstruct the interaction timeline, render smooth 1080p60 MP4. Built on TakeOne.",
+  "devDependencies": {
+    "@types/node": "^26.6.0",
+    "ajv": "^8.17.1",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "README.md",
+    "LICENSE",
+    "schema"
+  ],
+  "homepage": "https://github.com/Vinayak19112003/muse-takeone#readme",
+  "keywords": [
+    "muse",
+    "screen-recording",
+    "browser-automation",
+    "ai-agent",
+    "video",
+    "typescript",
+    "ffmpeg",
+    "demo-video",
+    "cursor",
+    "reconstruction"
+  ],
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "name": "muse-takeone",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Vinayak19112003/muse-takeone.git"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "prepublishOnly": "npm run build",
+    "test": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "visual-qa": "node scripts/visual-qa.mjs",
+    "visual-qa:update": "node scripts/visual-qa.mjs --update",
+    "fixtures:visual": "node tests/fixtures/visual/gen.mjs"
+  },
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "version": "0.1.0"
+}
