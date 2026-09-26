@@ -2,41 +2,42 @@
 
 Polished demo videos made by Muse, from Muse's own browser. Smooth cursor, click ripples, settled camera shots, crossfades, and the padded Screen Studio frame — rendered at 1080p, 60 fps.
 
-This is a fork of [takeone](https://github.com/atharvadeosthale/takeone), rebuilt around the way Muse works. An agent driving a browser live makes jumpy footage, because every pause while the model thinks ends up on camera. And Muse's managed browser — the one that's actually logged in to your accounts — can't be screen-recorded by outside tools at all.
+Muse drives a browser live, and live agent footage is jumpy: every pause while the model thinks ends up on camera. And Muse's managed browser — the one that's actually logged in to your accounts — can't be screen-recorded by outside tools at all. So muse-takeone splits the job the way Muse actually operates:
 
-So muse-takeone splits the job the way Muse actually operates:
+1. **Capture** — Muse takes real screenshots of each stage in the managed browser session (real logged-in state, no fresh headless browser pretending to be you).
+2. **Reconstruct** — `muse-takeone reconstruct` turns those screenshots plus an action script into a full recording manifest: eased 60 Hz cursor glides, clicks, typing, settled camera shots.
+3. **Render** — TakeOne's real compositor draws the video on its own clock. The footage never waits on the model, and a take can be restyled without capturing again.
 
-1. **Muse captures.** Screenshots are taken from the exact managed browser session that's signed in — real logged-in state, no fresh headless browser pretending to be you.
-2. **Muse reconstructs.** `takeone reconstruct` turns those screenshots plus an action script into a full recording manifest: eased 60 Hz cursor glides, clicks, typing, and settled camera shots planned around what you're doing.
-3. **TakeOne renders.** The real compositor draws the video on its own clock — the footage never waits on the model, and you can restyle a take without capturing again.
+## Install
 
-## Quick start
+muse-takeone installs from this repository (it is not published to npm):
 
 ```bash
 git clone https://github.com/Vinayak19112003/muse-takeone.git
 cd muse-takeone
-npm install
+npm ci
 npm run build
 ```
 
-The bundled skill teaches Muse the whole workflow:
+Then check the machine: `node dist/cli.js doctor` (node ≥ 20, ffmpeg, a Chromium renderer, disk space). The CLI binary is `muse-takeone`; a `takeone` alias is kept for compatibility. `npm link` gives you a global `muse-takeone`.
+
+The bundled skill teaches Muse the whole workflow — see [`skills/muse-takeone/SKILL.md`](skills/muse-takeone/SKILL.md).
+
+## The workflow
+
+Capture one screenshot per stage from the managed browser session (it's already logged in — that's the point). Ground every click target from its own screenshot. Then describe what happened:
 
 ```bash
-npx skills add Vinayak19112003/muse-takeone
-```
-
-### The Muse workflow: capture → reconstruct → render
-
-Capture one screenshot per stage from the managed browser session (it's already logged in — that's the point). Then describe what happened:
-
-```bash
-takeone reconstruct input.json -o demo.mp4
+muse-takeone validate input.json   # schema + semantics check
+muse-takeone inspect input.json    # what will happen: shots, timing, warnings
+muse-takeone reconstruct input.json --require-source muse-managed-browser -o demo.mp4
 ```
 
 `input.json`:
 
 ```json
 {
+  "version": 1,
   "source": { "type": "muse-managed-browser", "session": "main" },
   "viewport": { "width": 1919, "height": 992 },
   "screenshotsDir": "frames",
@@ -47,63 +48,66 @@ takeone reconstruct input.json -o demo.mp4
       "caption": "Open the repo",
       "actions": [
         { "kind": "click", "x": 1520, "y": 147, "pauseMs": 900 },
-        { "kind": "click", "x": 300, "y": 700 }
+        { "kind": "type", "x": 800, "y": 450, "text": "hello world", "showKeys": true }
       ]
     },
-    {
-      "file": "02-merged.png",
-      "holdMs": 2600,
-      "caption": "Merged",
-      "actions": [{ "kind": "type", "x": 800, "y": 450, "text": "shipped" }]
-    }
+    { "file": "02-merged.png", "caption": "Merged" }
   ]
 }
 ```
 
-Actions run in order while their frame is up: the cursor glides along an eased curved path to each target, clicks, or types. If the actions take longer than `holdMs`, the frame extends automatically.
+Actions (`click`, `type`, `scroll`, `hover`, `wait`) run in order while their frame is up. The cursor glides along an eased curved path, clicks with a ripple, or types with a growing key pill. The full input contract lives in [`schema/reconstruction.schema.json`](schema/reconstruction.schema.json); annotated examples in [`examples/`](examples/).
 
-The `source` field records provenance. Pass `--require-source muse-managed-browser` and the build fails loudly if the input wasn't captured from Muse's managed browser — no silent fresh-Chromium footage, ever:
+**Capture rules that matter:**
 
-```bash
-takeone reconstruct input.json --require-source muse-managed-browser -o demo.mp4
-```
+- The screenshots must come from **the browser Muse is already driving** — its logged-in state, cookies, avatar, theme. Never launch another browser to obtain footage; TakeOne's Chromium is for **rendering only** and never browses the target site.
+- One UI state per screenshot: capture before *and* after every UI-changing action, settled, never mid-animation.
+- Screenshots usually contain the OS cursor baked in — paint it out per frame before rendering, or the video shows two cursors.
+- `source.type` is **declarative provenance metadata** (`muse-managed-browser` | `external-browser` | `manual-screenshots`), not cryptographic proof. `--require-source muse-managed-browser` fails loudly if the input wasn't captured from the managed browser — no silent fresh-Chromium footage, ever.
 
-**Camera philosophy: SHOT = CAMERA MOVE.** Reconstructed mode plans the camera in settled shots, not clicks. Nearby interactions share one framing — the camera moves once, settles before the first click, and holds through the UI mutations. Screenshot cuts never move the camera; each cut plays a short output-time crossfade. When the next target leaves the shot's visual region, the camera reframes directly into the next shot — never zoom-out, pause, zoom-in. Only the final shot releases back to the overview.
+**Camera philosophy: SHOT = CAMERA MOVE.** The camera is planned in settled shots, not clicks. Nearby interactions share one framing; cuts never move the camera (short output-time crossfade); reframes are direct, never zoom-out/zoom-in; only the final shot releases to the overview. See [`docs/architecture.md`](docs/architecture.md).
 
-Notes from practice:
+**Privacy.** Redact regions at copy time (`redactions: [{ x, y, width, height, mode: "blur" | "solid" | "pixelate" }]`) — the pixels never reach the video. `{ "kind": "type", "sensitive": true }` hides the key pill. Never type real credentials for a demo; use fake ones. Treat the frames directory like credentials.
 
-- Ground every click target from its own screenshot instead of hand-placing it. Visual-grounding tools typically return 0–1000 normalized coordinates, so convert before use: `px = x / 1000 × width`, `py = y / 1000 × height`.
-- Screenshots usually contain the OS cursor baked in — locate it per frame and paint it out (a ~44px mask around the tip works; use a tighter polygon where UI sits under the cursor) before rendering, or the video shows two cursors.
-- Settle the page before each screenshot: a shot taken mid-animation bakes the animation into a still, and the crossfade then looks like a glitch. One UI state per screenshot — the post-click shot must show the post-click page.
-- `keys.mode: "all"` (already the reconstruction default) shows typed characters as a growing pill, which reads as live typing over an empty text field.
-- Point takeone at a system Chrome to skip the ~650MB Playwright download at render time: `TAKEONE_CHROMIUM_PATH=/opt/meta-chromium/chrome takeone reconstruct …`.
-- The render is deterministic: the same input always produces the same video. Crossfades are measured in output time and every frame names its own images, so parallel workers can't disagree. Use `--keep-work-dir` and `takeone render <work-dir>` to restyle a take without rebuilding it.
-- Before calling a render done: confirm specs with ffprobe, extract frames mid-cut to see the blend actually playing, spot-check click moments for cursor-on-target, and scan for double cursors or inpainting damage.
-- Describe the result honestly as reconstructed from real screenshots (real frames, rebuilt cursor path), never as a captured live recording.
+**Describe the result honestly:** "reconstructed from real screenshots" (real frames, rebuilt cursor path) — never "a captured live recording". See [`docs/limitations.md`](docs/limitations.md).
 
-**Advanced:** `reconstruct` writes a plain `manifest.json` with `mode: "reconstructed"` into its working dir. You can hand-build or tweak that manifest instead — the shot planner (`src/reconstruct/shots.ts`) runs on any manifest with the mode set, and accepts explicit `shots` to override the planning entirely. Calmer-than-native defaults live in `RECONSTRUCTION_DEFAULTS` (`src/config.ts`).
+## CLI reference
 
-## Everything else takeone does
+| command | does |
+|---|---|
+| `muse-takeone validate input.json` | schema + semantics check (missing files, bad coordinates/timing, provenance mismatch) |
+| `muse-takeone inspect input.json` | summary: source, frames, actions, expected duration, camera shots, QA warnings |
+| `muse-takeone doctor [--json]` | machine readiness: node, ffmpeg, Chromium renderer, disk, write perms |
+| `muse-takeone reconstruct input.json -o demo.mp4` | validate → manifest → 1080p60 MP4 + contact sheet + QA report |
+| `muse-takeone render <dir>` | re-render a kept work dir (`--keep-work-dir`) with different styling |
+| `muse-takeone assemble ./frames` | Ken Burns-style video from stills, no cursor (upstream feature) |
+| `muse-takeone setup` | download Chromium once, check ffmpeg (upstream feature) |
 
-The original takeone workflow is fully intact for agents that drive their own browser:
-
-- **Rehearse & record** — `takeone do` drives a live browser step by step, `session export` turns the rehearsal into a TypeScript scenario, `record` renders it. Targets name what an element is (`{ role, name }`), not where it sits in the DOM.
-- **Scenarios** — the export is a plain TypeScript file you can edit by hand. Full API in [`skills/takeone/references/scenario-api.md`](skills/takeone/references/scenario-api.md).
-- **Assemble** — `takeone assemble ./frames` builds a polished video from still screenshots with Ken Burns motion, caption bars, fades, and an optional title card. For footage that needs motion but not a cursor.
-- **MCP server** — `npx -y takeone mcp` gives agents screenshot-carrying tool calls; shares one browser with the CLI.
-- **The look** — capture and output configured separately. Default: 1920x1080 capture at 2x, 1080p 60 fps H.264 output, padded frame, large cursor with click ripples, eased auto-zoom.
-
-```bash
-npm i -D takeone
-npx takeone setup   # downloads Chromium once (~650 MB), checks ffmpeg
-```
+The original takeone workflow (rehearse live → export scenario → record) is fully intact for agents that drive their own browser. The reconstruction features above are the muse-takeone additions; upstream functionality is documented in [`skills/muse-takeone/references/scenario-api.md`](skills/muse-takeone/references/scenario-api.md).
 
 ## How it works
 
-Playwright drives headless Chromium. Frames come from the DevTools screencast at full resolution, and every pointer move, click, key press, scroll, zoom and wait goes into a `manifest.json`. The compositor renders the video from that log, split across several browser workers that each encode a segment with ffmpeg. The cursor path and camera moves are computed from the log, not from the capture, so they stay smooth even when the page stutters. Output is H.264 MP4 by default, or VP9 WebM.
+`reconstruct` copies the screenshots into a working dir (applying redactions), writes a `manifest.json` with `mode: "reconstructed"`, and synthesizes the 60 Hz cursor/click/key event stream plus camera shots from the action script. The compositor then renders the video from that manifest, split across browser workers that each encode a segment with ffmpeg. Cursor path and camera moves are computed from the log, not from the capture, so they stay smooth even when the page stutters. Output is H.264 MP4 by default, or VP9 WebM.
 
-Limitations: web apps only; pages that repaint faster than the screencast can encode may drop frames (cursor and camera unaffected); headless Chromium has no GPU, so heavy WebGL renders slowly.
+The render is deterministic: the same input always produces the same video. Crossfades are measured in output time and every frame names its own images, so parallel workers can't disagree.
+
+How it works in detail: [`docs/architecture.md`](docs/architecture.md). Privacy and security notes: [`docs/privacy.md`](docs/privacy.md). Known limitations: [`docs/limitations.md`](docs/limitations.md).
+
+## Development
+
+```bash
+npm test          # 41 unit tests (node:test + tsx)
+npm run typecheck
+npm run build
+npm run visual-qa # render fixtures, diff contact sheets vs baselines (manual gate)
+```
+
+Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md). Changelog: [`CHANGELOG.md`](CHANGELOG.md).
+
+## Attribution
+
+muse-takeone is based on [takeone](https://github.com/atharvadeosthale/takeone) by Atharva Deosthale, MIT licensed. The reconstruction pipeline, CLI additions (`reconstruct`, `validate`, `inspect`), provenance model, redaction, and this documentation are the muse-takeone additions. No upstream endorsement is implied.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
