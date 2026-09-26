@@ -33,7 +33,11 @@
     "!dist/**/*.map",
     "README.md",
     "LICENSE",
-    "schema"
+    "CHANGELOG.md",
+    "schema",
+    "skills/muse-takeone/SKILL.md",
+    "docs",
+    "examples"
   ],
   "homepage": "https://github.com/Vinayak19112003/muse-takeone#readme",
   "keywords": [
