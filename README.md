@@ -2,7 +2,7 @@
 
 Polished demo videos made by Muse, from Muse's own browser. Smooth cursor, click ripples, settled camera shots, crossfades, and the padded Screen Studio frame — rendered at 1080p, 60 fps.
 
-This is a fork of [takeone](https://github.com/Vinayak19112003/takeone), rebuilt around the way Muse works. An agent driving a browser live makes jumpy footage, because every pause while the model thinks ends up on camera. And Muse's managed browser — the one that's actually logged in to your accounts — can't be screen-recorded by outside tools at all.
+This is a fork of [takeone](https://github.com/atharvadeosthale/takeone), rebuilt around the way Muse works. An agent driving a browser live makes jumpy footage, because every pause while the model thinks ends up on camera. And Muse's managed browser — the one that's actually logged in to your accounts — can't be screen-recorded by outside tools at all.
 
 So muse-takeone splits the job the way Muse actually operates:
 
