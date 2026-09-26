@@ -2,7 +2,8 @@
  * Build a reconstructed recording manifest from real screenshots plus an action script.
  *
  * This is the programmatic core of `takeone reconstruct`. Muse (or anyone) captures
- * real screenshots in another browser, notes where it clicked/typed in each one, and
+ * real screenshots in the source browser (normally Muse's own managed browser session),
+ * notes where it clicked/typed in each one, and
  * this module synthesizes the cursor and click event stream the compositor needs:
  * 60Hz eased cursor glides along curved paths, mousedown/mouseup pairs, and key events.
  * The manifest comes out with mode "reconstructed", so render() plans shot-level camera
@@ -19,6 +20,7 @@ import type {
   Point,
   RecordedEvent,
   RecordingManifest,
+  ReconstructionSource,
   ScenarioConfig,
   UserScenarioConfig,
 } from "../types.js";
@@ -64,6 +66,13 @@ export interface ReconstructionInput {
   /** Directory holding the screenshot files; resolved relative to the input file. Default ".". */
   screenshotsDir?: string;
   frames: ReconstructionFrame[];
+  /**
+   * Capture provenance: where the screenshots came from. Optional for backwards
+   * compatibility. When the workflow runs in Muse's managed browser this must be
+   * `{ "type": "muse-managed-browser" }`; use `--require-source` to enforce it.
+   * Preserved verbatim in the generated manifest. Never affects rendering.
+   */
+  source?: ReconstructionSource;
 }
 
 export interface BuildReconstructionOptions {
@@ -74,6 +83,13 @@ export interface BuildReconstructionOptions {
   workDir: string;
   /** Extra config overrides on top of the reconstruction defaults. */
   config?: UserScenarioConfig;
+  /**
+   * Enforce capture provenance: throw unless `input.source.type` matches.
+   * Makes an accidental capture fallback (e.g. screenshots from a fresh browser
+   * when the workflow ran in the managed one) fail loudly instead of silently
+   * producing a video from the wrong session.
+   */
+  requireSource?: ReconstructionSource["type"];
   log?: (msg: string) => void;
 }
 
@@ -84,6 +100,13 @@ const DEFAULT_HOLD = 2600;
 const GLIDE_MS_PER_PX = 0.55;
 const GLIDE_MIN = 420;
 const GLIDE_MAX = 1100;
+
+/** Every known capture-source type. Kept in code so --require-source typos fail loudly. */
+export const RECONSTRUCTION_SOURCE_TYPES: ReconstructionSource["type"][] = [
+  "muse-managed-browser",
+  "external-browser",
+  "manual-screenshots",
+];
 
 /** Eased cursor samples from `from` to `to` starting at `t0`. Returns the arrival time. */
 function glide(
@@ -168,6 +191,7 @@ export function buildReconstructionManifest(
   return {
     version: 1,
     mode: "reconstructed",
+    source: input.source,
     createdAt: new Date().toISOString(),
     config: cfg,
     viewport: { width: vw, height: vh, deviceScaleFactor: 1 },
@@ -179,6 +203,26 @@ export function buildReconstructionManifest(
   };
 }
 
+/** Fail loudly when the required capture source is not what the input claims. */
+function checkSource(input: ReconstructionInput, requireSource?: ReconstructionSource["type"]): void {
+  if (!requireSource) return;
+  if (!RECONSTRUCTION_SOURCE_TYPES.includes(requireSource)) {
+    throw new Error(
+      `--require-source ${JSON.stringify(requireSource)} is not a known source type. ` +
+        `Expected one of: ${RECONSTRUCTION_SOURCE_TYPES.join(", ")}.`,
+    );
+  }
+  const actual = input.source?.type;
+  if (actual !== requireSource) {
+    throw new Error(
+      `--require-source ${requireSource} but the input claims source ` +
+        `${actual === undefined ? "(none)" : JSON.stringify(actual)}. ` +
+        `Refusing to reconstruct: the screenshots did not come from the expected capture browser. ` +
+        `Fix the capture source, or drop --require-source if you really mean to use these screenshots.`,
+    );
+  }
+}
+
 /**
  * Write a reconstruction working directory: copies the screenshots into frames/,
  * writes manifest.json with the reconstruction defaults, and returns the manifest.
@@ -186,6 +230,7 @@ export function buildReconstructionManifest(
  */
 export function writeReconstructionDir(opts: BuildReconstructionOptions): { workDir: string; manifest: RecordingManifest } {
   const log = opts.log ?? (() => {});
+  checkSource(opts.input, opts.requireSource);
   const cfg = resolveConfig(RECONSTRUCTION_DEFAULTS, opts.config);
   const manifest = buildReconstructionManifest(opts.input, cfg);
   const workDir = resolve(opts.workDir);
@@ -204,6 +249,12 @@ export function writeReconstructionDir(opts: BuildReconstructionOptions): { work
   }
   mkdirSync(dirname(join(workDir, "manifest.json")), { recursive: true });
   writeFileSync(join(workDir, "manifest.json"), JSON.stringify(manifest, null, 2));
+  const src = opts.input.source;
+  log(`Capture source: ${src?.type ?? "unspecified (backwards compatible)"}`);
+  log(`Frames: ${manifest.frames.length}, viewport: ${manifest.viewport.width}x${manifest.viewport.height}`);
+  if (src?.session) log(`Source session: ${src.session}`);
+  log("Renderer: TakeOne compositor Chromium (local frames only)");
+  log("Target-site navigation by renderer: none");
   log(`Reconstruction manifest: ${manifest.frames.length} frames, ${manifest.events.length} events -> ${workDir}`);
   return { workDir, manifest };
 }
