@@ -60,8 +60,37 @@ export function validateReconstructionInput(input: unknown, baseDir: string): Va
   const shotsDir = resolve(baseDir, typeof inp.screenshotsDir === "string" ? inp.screenshotsDir : ".");
   if (inp.screenshotsDir !== undefined && typeof inp.screenshotsDir !== "string") {
     err("input.screenshotsDir must be a string path");
+  } else if (typeof inp.screenshotsDir === "string" &&
+             (isAbsolute(inp.screenshotsDir) || inp.screenshotsDir.split(/[\\/]/).includes(".."))) {
+    err(`input.screenshotsDir must stay inside the input directory: no absolute paths or ".." segments (got "${inp.screenshotsDir}")`);
   } else if (!existsSync(shotsDir)) {
     err(`screenshotsDir does not exist: ${shotsDir}`);
+  }
+
+  if (inp.shots !== undefined) {
+    if (!Array.isArray(inp.shots) || inp.shots.length === 0) {
+      err("input.shots must be a non-empty array of { start, end, cx, cy, scale } in source ms");
+    } else {
+      let prevEnd = -1;
+      inp.shots.forEach((s: unknown, i: number) => {
+        const w = `input.shots[${i}]`;
+        if (!s || typeof s !== "object") { err(`${w} must be an object`); return; }
+        const sh = s as Record<string, unknown>;
+        for (const k of ["start", "end", "cx", "cy", "scale"]) {
+          if (!isNum(sh[k])) err(`${w}.${k} must be a number, got ${JSON.stringify(sh[k])}`);
+        }
+        if (isNum(sh.start) && isNum(sh.end) && sh.end <= sh.start) {
+          err(`${w}.end (${sh.end}) must be after ${w}.start (${sh.start})`);
+        }
+        if (isNum(sh.scale) && (sh.scale <= 0 || sh.scale > 8)) {
+          err(`${w}.scale must be between 0 and 8, got ${sh.scale}`);
+        }
+        if (isNum(sh.start) && isNum(prevEnd) && sh.start < prevEnd) {
+          warn(`${w}.start (${sh.start}) overlaps the previous shot (ends ${prevEnd}); shots should be sequential`);
+        }
+        if (isNum(sh.end)) prevEnd = Math.max(prevEnd, sh.end as number);
+      });
+    }
   }
 
   const frames = inp.frames as unknown;

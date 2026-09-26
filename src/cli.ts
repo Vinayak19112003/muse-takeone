@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { dirname, relative } from "node:path";
@@ -419,6 +419,16 @@ sharedOpts(
     }
     const { manifest } = writeReconstructionDir({ input, baseDir, workDir, config: parseOverrides(o), requireSource: o.requireSource, log });
     const outFile = resolve(o.out ?? join(baseDir, "reconstruct-output.mp4"));
+    if (outFile === inputPath) {
+      log("error: refusing to write the video over the input file itself");
+      process.exitCode = 1;
+      return;
+    }
+    if (outFile === workDir || outFile.startsWith(workDir + sep)) {
+      log("error: refusing to write the video inside the work dir (it is deleted after rendering unless --keep-work-dir)");
+      process.exitCode = 1;
+      return;
+    }
     const res = await renderRecording({ recordingDir: workDir, outFile, config: parseOverrides(o), contactSheet: o.contactSheet, log, onProgress: progress });
     const qa = qaReconstruction(input, manifest);
     log(`QA: ${formatQaMetrics(qa.metrics)}`);

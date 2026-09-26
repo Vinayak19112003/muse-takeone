@@ -17,6 +17,7 @@ import { curvedPath, resolveEasing } from "../motion.js";
 import { RECONSTRUCTION_DEFAULTS, resolveConfig } from "../config.js";
 import { applyRedactions } from "./redact.js";
 import type {
+  CameraShot,
   FrameIndexEntry,
   Point,
   RecordedEvent,
@@ -181,6 +182,15 @@ export interface ReconstructionInput {
   redactions?: RedactionRegion[];
   /** Cursor glide tuning overrides. */
   motion?: ReconstructionMotion;
+  /**
+   * Explicit camera shots, overriding the automatic shot planner entirely.
+   * Times are in source ms — the synthetic timeline `muse-takeone inspect` prints
+   * (each frame's `@Ns` timestamp). Run inspect first, then author shots around
+   * the frames you want reframed. Each shot: `{ start, end, cx, cy, scale }`
+   * (centre in viewport CSS px, scale like 1.35), optional `transitionDuration`
+   * (output ms) and `easing`.
+   */
+  shots?: CameraShot[];
 }
 
 export interface BuildReconstructionOptions {
@@ -411,6 +421,7 @@ export function buildReconstructionManifest(
     events,
     duration,
     captions,
+    ...(input.shots ? { shots: input.shots } : {}),
   };
 }
 

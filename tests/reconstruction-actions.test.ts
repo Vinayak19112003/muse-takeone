@@ -1,5 +1,5 @@
 /**
- * Cases H–V: reconstruction action model, timing, validation, QA, redaction.
+ * Cases H–Y: reconstruction action model, timing, validation, QA, redaction.
  *
  * H: typing emits per-character key events; the burst is one camera focus; the HUD
  *    shows a growing text pill; showKeys/sensitive control visibility.
@@ -9,6 +9,8 @@
  * L: wait advances the timeline with no events.
  * M: validation catches missing files, bad coords, bad versions, dup basenames,
  *    bad source types, negative timing, bad action kinds; warns on ignored options.
+ * X: explicit input.shots override the auto shot planner.
+ * Y: screenshotsDir cannot escape the input directory.
  * N: redaction validation (modes, empty regions); applyRedactions alters pixels.
  * O: JSON Schema accepts a valid input and rejects an invalid one (ajv).
  * P: preClickMs delays mousedown after cursor arrival.
@@ -409,5 +411,68 @@ describe("writeReconstructionDir", () => {
     }
     const good = validateReconstructionInput(baseInput([{ file: "a.png" }, { file: "b.png" }]), dir);
     assert.equal(good.ok, true);
+  });
+});
+
+describe("X: explicit shots override", () => {
+  it("input.shots lands on the manifest and drives camera planning", () => {
+    const input = baseInput([
+      { file: "a.png", actions: [{ kind: "click", x: 100, y: 100 }] },
+      { file: "b.png", actions: [{ kind: "click", x: 1100, y: 700 }] },
+    ]);
+    const auto = planReconstructionCamera(build(input), cfg);
+    input.shots = [
+      { start: 0, end: 4000, cx: 640, cy: 400, scale: 1.35 },
+      { start: 4000, end: 9000, cx: 640, cy: 400, scale: 1 },
+    ];
+    const m = build(input);
+    assert.deepEqual(m.shots, input.shots);
+    const plan = planReconstructionCamera(m, cfg);
+    assert.deepEqual(
+      plan.shots.map((s) => ({ cx: s.cx, cy: s.cy, scale: s.scale })),
+      [
+        { cx: 640, cy: 400, scale: 1.35 },
+        { cx: 640, cy: 400, scale: 1 },
+      ],
+    );
+    assert.notDeepEqual(plan.shots, auto.shots, "explicit shots must replace the auto plan");
+    assert.ok(plan.keys.length > 0, "explicit shots still produce camera keyframes");
+  });
+
+  it("validation accepts well-formed shots and rejects malformed ones", () => {
+    const good = baseInput([{ file: "a.png" }]);
+    good.shots = [{ start: 0, end: 4000, cx: 640, cy: 400, scale: 1.35 }];
+    assert.equal(validateReconstructionInput(good, dir).ok, true);
+
+    for (const badShots of [
+      [{ start: 4000, end: 4000, cx: 1, cy: 1, scale: 1 }], // end <= start
+      [{ start: 0, end: 4000, cx: 1, cy: 1, scale: 0 }], // scale <= 0
+      [{ start: 0, end: 4000, cx: 1, cy: 1 }], // missing scale
+      "nope",
+      [],
+    ]) {
+      const inp = baseInput([{ file: "a.png" }]);
+      (inp as Record<string, unknown>).shots = badShots;
+      const v = validateReconstructionInput(inp, dir);
+      assert.equal(v.ok, false, JSON.stringify(badShots));
+    }
+  });
+});
+
+describe("Y: screenshotsDir cannot escape the input directory", () => {
+  it("rejects absolute paths and .. segments", () => {
+    for (const bad of ["../x", "..\\x", "/etc", "a/../../x"]) {
+      const inp = baseInput([{ file: "a.png" }]);
+      inp.screenshotsDir = bad;
+      const v = validateReconstructionInput(inp, dir);
+      assert.equal(v.ok, false, bad);
+      assert.match(
+        v.errors.map((e) => e.message).join("\n"),
+        /must stay inside the input directory/,
+      );
+    }
+    const good = baseInput([{ file: "a.png" }]);
+    good.screenshotsDir = "frames";
+    assert.equal(validateReconstructionInput(good, dir).ok, true);
   });
 });

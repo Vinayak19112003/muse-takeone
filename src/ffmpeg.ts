@@ -1,4 +1,4 @@
-import { spawn, execSync } from "node:child_process";
+import { spawn, execSync, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 
@@ -24,7 +24,8 @@ export function resolveFfmpeg(): string {
 
 export function ffmpegVersion(): string | undefined {
   try {
-    return execSync(`"${resolveFfmpeg()}" -version`, { encoding: "utf8" }).split("\n")[0];
+    // execFileSync: no shell, so ffmpeg paths with spaces or $ stay intact.
+    return execFileSync(resolveFfmpeg(), ["-version"], { encoding: "utf8" }).split("\n")[0];
   } catch {
     return undefined;
   }
