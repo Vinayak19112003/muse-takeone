@@ -2,13 +2,15 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync } from "node
 import { join, resolve, dirname, isAbsolute } from "node:path";
 import { cpus } from "node:os";
 import { chromium, type Browser } from "playwright";
-import type { RecordingManifest, ScenarioConfig, UserScenarioConfig, Point } from "../types.js";
+import type { RecordingManifest, ScenarioConfig, UserScenarioConfig } from "../types.js";
 import { resolveConfig, resolveCursorSize } from "../config.js";
 import { ensureChromium, resolveExecutablePath } from "../browser.js";
 import { spawnFfmpeg, runFfmpeg } from "../ffmpeg.js";
-import { clamp, lerp } from "../motion.js";
+import { clamp } from "../motion.js";
 import { compositorHtml } from "./page.js";
-import { buildTimeline, cameraBusyWindows, outToSource, planCamera, makeCameraEvaluator, extractCursor, cursorAt, frameIndexAt, crossesCut, planKeyToasts, keyHudAt, type KeyHud } from "./plan.js";
+import { buildTimeline, cameraBusyWindows, outToSource, sourceToOutput, rateAtSource, planCamera, makeCameraEvaluator, extractCursor, planKeyToasts, type CameraKeyframe, type CameraState, type KeptRange } from "./plan.js";
+import { planFrameInstructions } from "./instructions.js";
+import { planReconstructionCamera } from "../reconstruct/shots.js";
 
 export interface RenderOptions {
   /** Directory containing manifest.json and frames/. */
@@ -30,27 +32,71 @@ export interface RenderResult {
   frames: number;
 }
 
-interface FrameInstruction {
-  file: string;
-  cam: { px: number; py: number; scale: number };
-  cursor: { x: number; y: number; pressed: boolean; visible: boolean } | null;
-  ripples: { x: number; y: number; p: number }[];
-  uiScale: number;
-  hud: KeyHud | null;
-  caption: string | null;
-  /**
-   * Crossfade progress right after a frame cut: 0 = previous frame fully
-   * visible, 1 = new frame fully visible. Null when no cut happened in the
-   * last MIX_MS, so stills hold without blending.
-   */
-  mix: number | null;
+export interface RenderCameraPlan {
+  /** Source-time keyframes (also feeds the cut-protection windows). */
+  keys: CameraKeyframe[];
+  /** Camera state evaluated at OUTPUT time. */
+  camAtOut: (tOut: number) => CameraState;
+  /** QA warnings from the shot planner (empty for native). */
+  warnings: string[];
 }
 
-/** Active narrative caption at source time t, or null. */
-function captionAt(captions: { start: number; end: number; text: string }[] | undefined, t: number): string | null {
-  if (!captions) return null;
-  for (const c of captions) if (t >= c.start && t < c.end) return c.text;
-  return null;
+/**
+ * Source-time camera keyframes for a render, chosen by manifest mode.
+ *
+ * - native: the classic click-driven auto-zoom keys (unchanged behavior).
+ * - reconstructed: shot-level planning (see ../reconstruct/shots.ts).
+ *
+ * Split from makeCamAtOut because buildTimeline needs the keys before the
+ * output-time ranges exist.
+ */
+export function planCameraKeys(
+  manifest: RecordingManifest,
+  cfg: ScenarioConfig,
+): { keys: CameraKeyframe[]; warnings: string[] } {
+  if (manifest.mode === "reconstructed") {
+    const { keys, audit } = planReconstructionCamera(manifest, cfg);
+    return { keys, warnings: audit.warnings };
+  }
+  return { keys: planCamera(manifest, cfg), warnings: [] };
+}
+
+/**
+ * Camera state evaluated at OUTPUT time.
+ *
+ * - native: wraps the source-time evaluator by mapping each output frame back to its
+ *   source time — exactly what the old inline code did.
+ * - reconstructed: keyframes are mapped to output time first — both start times AND
+ *   durations (divided by the local time-lapse rate), so a move plays at the same speed
+ *   as the action it was choreographed with under trimming and time-lapse.
+ */
+export function makeCamAtOut(
+  manifest: RecordingManifest,
+  cfg: ScenarioConfig,
+  ranges: KeptRange[],
+  keys: CameraKeyframe[],
+): (tOut: number) => CameraState {
+  const vw = manifest.viewport.width, vh = manifest.viewport.height;
+  if (manifest.mode === "reconstructed") {
+    const outKeys = keys.map((k) => ({
+      ...k,
+      t: sourceToOutput(ranges, k.t),
+      duration: k.duration / rateAtSource(ranges, k.t),
+    }));
+    return makeCameraEvaluator(outKeys, vw, vh);
+  }
+  const nativeAt = makeCameraEvaluator(keys, vw, vh);
+  return (tOut: number) => nativeAt(outToSource(ranges, tOut));
+}
+
+/** Convenience for tests: keys plus the output-time evaluator in one call. */
+export function planRenderCamera(
+  manifest: RecordingManifest,
+  cfg: ScenarioConfig,
+  ranges: KeptRange[],
+): RenderCameraPlan {
+  const { keys, warnings } = planCameraKeys(manifest, cfg);
+  return { keys, camAtOut: makeCamAtOut(manifest, cfg, ranges, keys), warnings };
 }
 
 /**
@@ -71,11 +117,12 @@ export async function renderRecording(opts: RenderOptions): Promise<RenderResult
 
   // ---- Plan every frame up front (cheap, and lets workers be stateless) ----
   const vw = manifest.viewport.width, vh = manifest.viewport.height;
-  const cameraKeys = planCamera(manifest, cfg);
+  const { keys: cameraKeys, warnings: cameraWarnings } = planCameraKeys(manifest, cfg);
+  for (const w of cameraWarnings) log(`camera: ${w}`);
   // Cuts must not land inside a camera move, so the timeline is built knowing where they are.
   const { ranges, outDuration } = buildTimeline(manifest, cfg, cameraBusyWindows(cameraKeys));
   const totalFrames = Math.max(1, Math.ceil((outDuration / 1000) * fps));
-  const camAt = makeCameraEvaluator(cameraKeys, vw, vh);
+  const camAtOut = makeCamAtOut(manifest, cfg, ranges, cameraKeys);
   const { samples, downs } = extractCursor(manifest.events);
   const keyToasts = planKeyToasts(manifest.events, cfg);
 
@@ -85,62 +132,24 @@ export async function renderRecording(opts: RenderOptions): Promise<RenderResult
   let cw = availW, ch = availW / aspect;
   if (ch > availH) { ch = availH; cw = availH * aspect; }
   const content = { x: (W - cw) / 2, y: (H - ch) / 2, w: cw, h: ch };
-  const uiScale = cw / vw;
 
-  const instructions: FrameInstruction[] = [];
-  // Camera works in composition space (output px at scale 1): the whole canvas, padding and
-  // background included, scales about the target the way Screen Studio does.
-  const toComp = (p: Point) => ({ x: content.x + p.x * uiScale, y: content.y + p.y * uiScale });
-  let prevSrc = -1;
-  let prevFi = -1;
-  let cutT = 0;
-  const MIX_MS = 240; // crossfade length after each frame cut
-  let followOffset: Point = { x: 0, y: 0 };
-  const k = 1 - Math.pow(0.001, 1 / fps / 0.35); // ~350ms time constant for follow easing
-  for (let i = 0; i < totalFrames; i++) {
-    const tSrc = outToSource(ranges, (i * 1000) / fps);
-    const fi = frameIndexAt(manifest.frames, tSrc);
-    if (fi !== prevFi) { cutT = tSrc; prevFi = fi; }
-    const mixAge = tSrc - cutT;
-    const mix = mixAge < MIX_MS ? mixAge / MIX_MS : null;
-    const cam = camAt(tSrc);
-    const s = cam.scale;
-    const cur = toComp(cursorAt(samples, tSrc));
-    const target = toComp({ x: cam.cx, y: cam.cy });
-    if (prevSrc >= 0 && crossesCut(ranges, prevSrc, tSrc)) followOffset = { x: 0, y: 0 };
-    const visW = W / s, visH = H / s;
-    if (cam.follow && s > 1.01 && cfg.zoom.followCursor) {
-      const cx = target.x + followOffset.x, cy = target.y + followOffset.y;
-      const inX = visW * 0.35, inY = visH * 0.35;
-      let tx = followOffset.x, ty = followOffset.y;
-      if (cur.x > cx + inX) tx += cur.x - (cx + inX);
-      if (cur.x < cx - inX) tx -= cx - inX - cur.x;
-      if (cur.y > cy + inY) ty += cur.y - (cy + inY);
-      if (cur.y < cy - inY) ty -= cy - inY - cur.y;
-      followOffset = { x: lerp(followOffset.x, tx, k), y: lerp(followOffset.y, ty, k) };
-    } else {
-      followOffset = { x: lerp(followOffset.x, 0, k), y: lerp(followOffset.y, 0, k) };
-    }
-    // Keep the visible window inside the composition so no empty edges appear.
-    const px = clamp(target.x + followOffset.x, visW / 2, W - visW / 2);
-    const py = clamp(target.y + followOffset.y, visH / 2, H - visH / 2);
-    prevSrc = tSrc;
-    const toOut = (p: Point) => ({ x: W / 2 + (p.x - px) * s, y: H / 2 + (p.y - py) * s });
-    const pressed = downs.some((d) => tSrc >= d.t && tSrc <= d.up);
-    const ripples = cfg.cursor.clickRipple
-      ? downs.filter((d) => tSrc >= d.t && tSrc - d.t < 450).map((d) => ({ ...toOut(toComp(d)), p: (tSrc - d.t) / 450 }))
-      : [];
-    instructions.push({
-      file: manifest.frames[fi].file,
-      cam: { px, py, scale: s },
-      cursor: cfg.cursor.enabled ? { ...toOut(cur), pressed, visible: samples.length > 0 } : null,
-      ripples,
-      uiScale: uiScale * Math.sqrt(s),
-      hud: keyHudAt(keyToasts, tSrc),
-      caption: captionAt(manifest.captions, tSrc),
-      mix,
-    });
-  }
+  const instructions = planFrameInstructions({
+    frames: manifest.frames,
+    fps,
+    ranges,
+    totalFrames,
+    camAtOut,
+    samples,
+    downs,
+    keyToasts,
+    captions: manifest.captions,
+    content,
+    vw,
+    W,
+    H,
+    cfg,
+    transitionMs: cfg.transition.duration,
+  });
 
   // ---- Render in parallel workers, each encoding its own segment ----
   const workers = clamp(cfg.output.workers ?? Math.min(6, cpus().length - 2), 1, 16);
