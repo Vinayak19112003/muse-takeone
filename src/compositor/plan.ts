@@ -165,6 +165,39 @@ export function outToSource(ranges: KeptRange[], tOut: number): number {
 }
 
 /**
+ * Inverse of outToSource: output time for a source timestamp. Source times that fall in
+ * a trimmed gap (no kept range covers them) clamp to the nearest kept edge. Used to
+ * express camera moves and crossfades in output time so their durations stay correct
+ * under trimming and time-lapse.
+ */
+export function sourceToOutput(ranges: KeptRange[], tSrc: number): number {
+  for (const r of ranges) {
+    if (tSrc >= r.srcStart && tSrc <= r.srcEnd) {
+      return r.outStart + (tSrc - r.srcStart) / r.rate;
+    }
+  }
+  if (!ranges.length) return 0;
+  if (tSrc < ranges[0].srcStart) return 0;
+  const last = ranges[ranges.length - 1];
+  return last.outStart + (last.srcEnd - last.srcStart) / last.rate;
+}
+
+/**
+ * Playback rate of the kept range covering a source timestamp (nearest edge when the
+ * timestamp falls in a trimmed gap — mirrors sourceToOutput's clamping). A duration
+ * authored in source ms plays over duration/rate output ms, which is how output-time
+ * camera durations stay choreographed with the action under time-lapse.
+ */
+export function rateAtSource(ranges: KeptRange[], tSrc: number): number {
+  for (const r of ranges) {
+    if (tSrc >= r.srcStart && tSrc <= r.srcEnd) return r.rate;
+  }
+  if (!ranges.length) return 1;
+  if (tSrc < ranges[0].srcStart) return ranges[0].rate;
+  return ranges[ranges.length - 1].rate;
+}
+
+/**
  * Did source time actually get dropped between two source times?
  *
  * Two adjacent ranges are not a cut: when range A ends exactly where range B starts, source

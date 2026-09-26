@@ -6,15 +6,24 @@ An agent driving a browser live makes a jumpy video, because every pause while t
 
 ## Get started
 
+This is a fork maintained at [Vinayak19112003/takeone](https://github.com/Vinayak19112003/takeone). To build this exact repository:
+
 ```bash
-npx skills add atharvadeosthale/takeone
+git clone https://github.com/Vinayak19112003/takeone.git
+cd takeone
+npm install
+npm run build
 ```
 
-Then ask your agent for a video:
+Then ask your agent for a video, or drive the CLI yourself:
 
 > Record a 30 second demo of creating a project on localhost:3000, and zoom in on the new project's ID at the end.
 
-The skill teaches the agent the whole job:
+The bundled skill teaches an agent the whole job:
+
+```bash
+npx skills add Vinayak19112003/takeone
+```
 
 1. Install the package.
 2. Set up Chromium.
@@ -205,55 +214,54 @@ Moves: `in`, `out`, `left`, `right`, `still`. Captions render through a system f
 
 ## Reconstructed recordings: the real compositor, from another browser
 
-When takeone can't attach to the browser that has the footage — a managed or logged-in browser it has no access to — capture one screenshot per stage there, then synthesize a takeone recording and run it through the real compositor. The result keeps the smooth cursor, click ripples, eased auto-zooms and the padded Screen Studio frame, instead of a plain slideshow.
+When takeone can't attach to the browser that has the footage — a managed or logged-in browser it has no access to — capture one screenshot per stage there and run `takeone reconstruct`. It synthesizes the cursor/click event stream from your action script and renders through the real compositor: smooth cursor, click ripples, shot-level camera, crossfades, and the padded Screen Studio frame.
 
-A recording is a folder with `frames/` (the screenshots) and a `manifest.json`:
+```bash
+takeone reconstruct input.json -o entry.mp4
+```
+
+`input.json`:
 
 ```json
 {
-  "version": 1,
   "viewport": { "width": 1919, "height": 992 },
-  "frameSize": { "width": 1919, "height": 992 },
+  "screenshotsDir": "frames",
   "frames": [
-    { "file": "f01.png", "t": 0 },
-    { "file": "f02.png", "t": 2700 }
-  ],
-  "events": [
-    { "type": "mouse", "t": 2000, "x": 1500, "y": 900 },
-    { "type": "mousedown", "t": 2650, "x": 838, "y": 682, "button": "left" },
-    { "type": "mouseup", "t": 2740, "x": 838, "y": 682, "button": "left" },
-    { "type": "key", "t": 8400, "key": "Z", "source": "type", "x": 700, "y": 763 }
-  ],
-  "duration": 18000,
-  "captions": [
-    { "start": 0, "end": 2700, "text": "Entering a giveaway" },
-    { "start": 2700, "end": 5250, "text": "Step 1 of 4 · Like the post" }
-  ],
-  "config": {
-    "zoom": { "auto": true, "autoScale": 1.7, "autoHold": 600, "autoLead": 400 },
-    "keys": { "mode": "all" },
-    "idleTrim": { "enabled": false }
-  }
+    {
+      "file": "01-open.png",
+      "holdMs": 3000,
+      "caption": "Open the post",
+      "actions": [
+        { "kind": "click", "x": 1520, "y": 147, "pauseMs": 900 },
+        { "kind": "click", "x": 300, "y": 700 }
+      ]
+    },
+    {
+      "file": "02-liked.png",
+      "holdMs": 2600,
+      "caption": "Liked and reposted",
+      "actions": [{ "kind": "type", "x": 800, "y": 450, "text": "done, entered!" }]
+    }
+  ]
 }
 ```
 
-Render it:
+Actions run in order while their frame is up: the cursor glides along an eased curved path to each target, clicks, or types. If the actions take longer than `holdMs`, the frame extends automatically.
 
-```bash
-takeone render ./recording -o entry.mp4
-```
+**Camera philosophy: SHOT = CAMERA MOVE.** Reconstructed mode plans the camera in settled shots, not clicks. Nearby interactions share one framing — the camera moves once, settles before the first click, and holds through the UI mutations. Screenshot cuts never move the camera; each cut plays a short output-time crossfade. When the next target leaves the shot's visual region, the camera reframes directly into the next shot — never zoom-out, pause, zoom-in. Only the final shot releases back to the overview.
 
 Notes from practice:
 
-- Dense cursor samples (every ~16ms along eased, slightly curved paths) make the motion look captured, not scripted. Frame cuts go just after each click's mouseup, and every cut now plays a 240ms crossfade into the next state — no hard jumps.
 - Ground every click target from its own screenshot instead of hand-placing it. Visual-grounding tools typically return 0–1000 normalized coordinates, so convert before use: `px = x / 1000 × width`, `py = y / 1000 × height`.
 - Screenshots usually contain the OS cursor baked in — locate it per frame and paint it out (a ~44px mask around the tip works; use a tighter polygon where UI sits under the cursor) before rendering, or the video shows two cursors.
-- Keep the zoom calm between rapid clicks: `autoHold: 600, autoLead: 400` stops the camera flickering when two actions land close together.
-- `captions` draws a fixed pill at the bottom of the screen (unaffected by the camera), styled like the key HUD — one per step keeps the story readable.
-- `keys.mode: "all"` shows typed characters as a growing pill, which reads as live typing over an empty text field.
-- Point takeone at a system Chrome to skip the ~650MB Playwright download at render time: `TAKEONE_CHROMIUM_PATH=/opt/meta-chromium/chrome takeone render …`.
+- Settle the page before each screenshot: a shot taken mid-animation bakes the animation into a still, and the crossfade then looks like a glitch. One UI state per screenshot — the post-click shot must show the post-click page.
+- `keys.mode: "all"` (already the reconstruction default) shows typed characters as a growing pill, which reads as live typing over an empty text field.
+- Point takeone at a system Chrome to skip the ~650MB Playwright download at render time: `TAKEONE_CHROMIUM_PATH=/opt/meta-chromium/chrome takeone reconstruct …`.
+- The render is deterministic: the same input always produces the same video. Crossfades are measured in output time and every frame names its own images, so parallel workers can't disagree. Use `--keep-work-dir` and `takeone render <work-dir>` to restyle a take without rebuilding it.
 - Before calling a render done: confirm specs with ffprobe, extract frames mid-cut to see the blend actually playing, spot-check click moments for cursor-on-target, and scan for double cursors or inpainting damage.
 - Describe the result honestly as reconstructed from real screenshots (real frames, rebuilt cursor path), never as a captured live recording.
+
+**Advanced:** `reconstruct` writes a plain `manifest.json` with `mode: "reconstructed"` into its working dir. You can hand-build or tweak that manifest instead — the shot planner (`src/reconstruct/shots.ts`) runs on any manifest with the mode set, and accepts explicit `shots` to override the planning entirely. Calmer-than-native defaults live in `RECONSTRUCTION_DEFAULTS` (`src/config.ts`).
 
 ## License
 

@@ -172,6 +172,69 @@ Read credentials from environment variables. Never write them into the file.
 
 `browser.colorScheme: "dark"` only sets the browser's dark-mode preference, which the page sees through `prefers-color-scheme`. If the app keeps its own theme setting, set it in the setup, as above.
 
+## Reconstructed recordings (Muse's managed browser)
+
+takeone cannot capture the browser Muse drives (no CDP or attach access), so footage from it is made by **reconstruction**: capture real screenshots of each stage in the managed browser, note where you clicked and typed in each one, then build a polished video through the real compositor:
+
+```bash
+npx takeone reconstruct input.json -o video.mp4
+```
+
+1. **Capture one real screenshot per stage** in the managed browser, in order. Each shot must be settled (no spinners, no half-open menus).
+2. **Ground every click target** on its screenshot before moving on (visual grounding gives normalized 0-1000 coordinates; convert to pixels: `px = x/1000*W`). Guessed coordinates are the main source of bad reconstructions.
+3. **Remove the baked-in OS cursor** from each screenshot (a ~44px box around the located cursor), or the video shows two cursors.
+4. **Write the input JSON** and run `takeone reconstruct`.
+
+### Input format
+
+```json
+{
+  "viewport": { "width": 1919, "height": 992 },
+  "screenshotsDir": "frames",
+  "frames": [
+    {
+      "file": "01-open.png",
+      "holdMs": 3000,
+      "caption": "Open the giveaway post",
+      "actions": [
+        { "kind": "click", "x": 1520, "y": 147, "pauseMs": 900 },
+        { "kind": "type", "x": 800, "y": 450, "text": "hello world", "pauseMs": 800 }
+      ]
+    },
+    { "file": "02-liked.png", "holdMs": 2600, "caption": "Like and repost",
+      "actions": [
+        { "kind": "click", "x": 300, "y": 700 },
+        { "kind": "click", "x": 360, "y": 700 }
+      ] }
+  ]
+}
+```
+
+- `actions` run in order while the frame is up. The cursor glides along an eased curved path to each target, clicks (mousedown/mouseup), or types.
+- `holdMs` is how long the screenshot stays before the next cut. If the actions take longer, the frame extends automatically.
+- Captions are source-time ranges drawn as a fixed pill, unaffected by the camera.
+
+`reconstruct` copies the screenshots into a working dir, writes a `manifest.json` with `mode: "reconstructed"`, synthesizes the 60Hz cursor/click event stream, and renders through the real compositor: smooth cursor, click ripples, shot-level camera, crossfades, padded Screen-Studio frame. `takeone render <work-dir>` (kept with `--keep-work-dir`) restyles the same take without rebuilding it.
+
+### Camera philosophy: SHOT = CAMERA MOVE
+
+Reconstructed mode plans the camera in **shots**, not clicks:
+
+- **One settled shot covers several related interactions.** Nearby clicks seconds apart (like, then repost) share one framing; the camera moves once, settles before the first click, and holds through the UI mutations.
+- **Screenshot cuts never move the camera.** A cut starts a short crossfade (default 140ms, output-time); the camera keeps doing whatever it was doing.
+- **Reframes are direct.** When the next target leaves the shot's visual region, the camera moves straight to the next shot — never zoom-out, pause, zoom-in.
+- **Only the final shot releases** back to the full overview, and only after a real gap.
+
+This is automatic from the action points: no manual zoom keyframes needed. Calmer-than-native defaults apply (`zoom.autoScale` 1.35, no cursor-following, `keys.mode` all). Override anything with `-c/--config` JSON or `RECONSTRUCTION_DEFAULTS` as a base in code.
+
+### Things that cost time if you don't know them
+
+- **Describe the result honestly**: "reconstructed from real screenshots" (real frames, rebuilt cursor path) — never "a captured live recording".
+- **Settle the page before each screenshot.** A screenshot taken mid-animation bakes the animation into a still; the crossfade then looks like a glitch.
+- **One UI state per screenshot.** If a click changes the page, the next screenshot must show the changed page; don't reuse the pre-click shot after the click.
+- **Chromium for rendering.** The compositor needs headless Chromium: `TAKEONE_CHROMIUM_PATH=/opt/meta-chromium/chrome npx takeone reconstruct …` avoids the 650MB Playwright download when a system Chrome exists.
+- **Deterministic.** The same input always renders the same video: crossfade progress is measured in output time, and every frame names its own images, so parallel render workers can't disagree.
+
 ## Making it look good
 
 - **Zoom for the viewer, not for every click.** Automatic zoom already follows clicks and typing, and `zoom.auto` controls it. Add an explicit `zoom` when the viewer needs to read something: a result, a status, a value that changed. Hold it for about 1.5 s, then `zoom-out` before the cursor travels far. Two to four deliberate zooms per minute reads better than constant motion. To turn automatic zoom off for a section, call `s.autoZoom(false)`.

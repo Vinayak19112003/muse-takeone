@@ -21,5 +21,27 @@ export {
 export { recordScenario, dryRunScenario, type RecordOptions, type RecordResult, type DryRunOptions, type DryRunResult } from "./runner/index.js";
 export { Session, type Target, type ClickOptions, type MoveOptions, type TypeOptions, type ScrollOptions, type ZoomOptions } from "./runner/session.js";
 export { renderRecording, type RenderOptions, type RenderResult } from "./compositor/render.js";
-export { defaultConfig, resolveConfig } from "./config.js";
+export { defaultConfig, resolveConfig, RECONSTRUCTION_DEFAULTS } from "./config.js";
 export * from "./types.js";
+export {
+  planReconstructionCamera,
+  planShots,
+  shotsToKeyframes,
+  groupFocusEvents,
+  extractFocusEvents,
+  optimizeCameraKeys,
+  auditCameraPlan,
+  shotBusyWindows,
+  type FocusEvent,
+  type CameraPlanAudit,
+} from "./reconstruct/shots.js";
+export {
+  buildReconstructionManifest,
+  writeReconstructionDir,
+  type ReconstructionInput,
+  type ReconstructionFrame,
+  type ReconstructionAction,
+  type ReconstructionClick,
+  type ReconstructionType,
+  type BuildReconstructionOptions,
+} from "./reconstruct/build.js";

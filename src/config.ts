@@ -28,6 +28,16 @@ export const defaultConfig: ScenarioConfig = {
     margin: 0.12,
     followCursor: true,
   },
+  reconstruction: {
+    groupGap: 3000,
+    routineScale: 1.35,
+    transitionMs: 900,
+    settleMs: 200,
+    releaseMs: 2000,
+  },
+  transition: {
+    duration: 240,
+  },
   motion: {
     cursorSpeed: "normal",
     minMoveDuration: 350,
@@ -77,3 +87,16 @@ export function deepMerge<T>(base: T, patch: unknown): T {
 export function resolveConfig(...patches: (UserScenarioConfig | undefined)[]): ScenarioConfig {
   return patches.reduce<ScenarioConfig>((acc, p) => deepMerge(acc, p), defaultConfig);
 }
+
+/**
+ * Base configuration for reconstructed recordings (mode: "reconstructed"). Calmer than the
+ * native defaults: a modest routine zoom (the whole composition scales, so high values feel
+ * aggressive), no cursor-following drift, and a shorter crossfade suited to sparse UI state
+ * changes. Used by `takeone reconstruct`; hand-built reconstructed manifests can layer it
+ * under their own overrides with `resolveConfig(RECONSTRUCTION_DEFAULTS, overrides)`.
+ */
+export const RECONSTRUCTION_DEFAULTS: ScenarioConfig = deepMerge<ScenarioConfig>(defaultConfig, {
+  zoom: { autoScale: 1.35, followCursor: false },
+  transition: { duration: 140 },
+  keys: { mode: "all" },
+});
