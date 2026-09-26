@@ -1,252 +1,72 @@
-# takeone
+# muse-takeone
 
-Your coding agent records polished demo videos of web apps. You get a smooth cursor, click ripples, eased zooms and a padded frame, the look Screen Studio made popular. It renders headless, so it runs on a Linux server as well as a Mac.
+Polished demo videos made by Muse, from Muse's own browser. Smooth cursor, click ripples, settled camera shots, crossfades, and the padded Screen Studio frame — rendered at 1080p, 60 fps.
 
-An agent driving a browser live makes a jumpy video, because every pause while the model thinks ends up on camera. takeone splits the job in two. The agent rehearses in a live browser, and the rehearsal becomes a script. The script then replays on its own clock, so the video never waits on the model. The cursor, zoom and frame are drawn afterwards, which means you can restyle a take without recording it again.
+This is a fork of [takeone](https://github.com/Vinayak19112003/takeone), rebuilt around the way Muse works. An agent driving a browser live makes jumpy footage, because every pause while the model thinks ends up on camera. And Muse's managed browser — the one that's actually logged in to your accounts — can't be screen-recorded by outside tools at all.
 
-## Get started
+So muse-takeone splits the job the way Muse actually operates:
 
-This is a fork maintained at [Vinayak19112003/takeone](https://github.com/Vinayak19112003/takeone). To build this exact repository:
+1. **Muse captures.** Screenshots are taken from the exact managed browser session that's signed in — real logged-in state, no fresh headless browser pretending to be you.
+2. **Muse reconstructs.** `takeone reconstruct` turns those screenshots plus an action script into a full recording manifest: eased 60 Hz cursor glides, clicks, typing, and settled camera shots planned around what you're doing.
+3. **TakeOne renders.** The real compositor draws the video on its own clock — the footage never waits on the model, and you can restyle a take without capturing again.
+
+## Quick start
 
 ```bash
-git clone https://github.com/Vinayak19112003/takeone.git
-cd takeone
+git clone https://github.com/Vinayak19112003/muse-takeone.git
+cd muse-takeone
 npm install
 npm run build
 ```
 
-Then ask your agent for a video, or drive the CLI yourself:
-
-> Record a 30 second demo of creating a project on localhost:3000, and zoom in on the new project's ID at the end.
-
-The bundled skill teaches an agent the whole job:
+The bundled skill teaches Muse the whole workflow:
 
 ```bash
-npx skills add Vinayak19112003/takeone
+npx skills add Vinayak19112003/muse-takeone
 ```
 
-1. Install the package.
-2. Set up Chromium.
-3. Rehearse the path and export it as a scenario.
-4. Dry-run the scenario to check it.
-5. Render `output.mp4`.
+### The Muse workflow: capture → reconstruct → render
 
-It works with Claude Code, Codex, Cursor and the other agents the [skills CLI](https://skills.sh) supports.
-
-### The MCP server
-
-Agents can drive takeone through its CLI, but the MCP server is faster. Each MCP reply carries a screenshot, so one call acts on the page and shows the result.
+Capture one screenshot per stage from the managed browser session (it's already logged in — that's the point). Then describe what happened:
 
 ```bash
-claude mcp add takeone -- npx -y takeone mcp
-codex mcp add takeone -- npx -y takeone mcp
-```
-
-Other clients take `{"command": "npx", "args": ["-y", "takeone", "mcp"]}`. The MCP server and the CLI share one browser, so an agent can switch between them mid-task.
-
-## Doing it yourself
-
-Everything the agent does, you can do yourself from a terminal.
-
-```bash
-npm i -D takeone
-npx takeone setup
-```
-
-`setup` downloads Chromium once, about 650 MB. Then it checks ffmpeg and starts a headless browser to prove everything works. If a Linux server is missing Chromium's system libraries, `npx takeone setup --with-deps` installs them with sudo.
-
-### Rehearse
-
-The first command opens the browser. Every command prints what's on screen, numbered, grouped by region, with what each element does:
-
-```
-$ npx takeone do goto http://localhost:3000
-✓ #1 await s.goto("http://localhost:3000/");
-/  "Acme Dashboard"
-nav
-  1 link "Overview" → /
-  2 link "Projects" → /projects
-main
-  4 heading "Create a project"
-  5 textbox "Project name"
-  6 button "Create project"
-  7 button [icon ellipsis] (opens menu)
-view: /tmp/takeone-view-9222/001-step1.jpg (the 1920x1080 page, scaled down)
-```
-
-The `view:` file is a screenshot with the same numbers drawn on it. Act by number:
-
-```
-$ npx takeone do type 5 "acme-prod"
-$ npx takeone do click 6
-✓ #3 await s.click({ role: "button", name: "Create project" });
-  matched 6 button "Create project"
-+ 8 status "Creating acme-prod…"
-```
-
-After the first view, each step prints only what changed. `+` marks new elements, `-` removed ones, and `~` changed state. Alerts and page errors show up too.
-
-takeone reads each element's purpose from the page's markup. It never clicks anything to find out what it does, because a Delete button clicked just to see what it does would really delete.
-
-You can also name targets in plain words (`click "create project"`), as `role:name` (`button:Create`), with `text=…` or `css=…`, or as a point (`640,360`).
-
-### Mark, export, record
-
-```bash
-npx takeone mark start                # the video starts here; anything earlier was looking around
-npx takeone do zoom 8                 # a camera move, nothing on the page changes
-npx takeone session export demo.ts    # replays the path to prove it, then writes the scenario
-npx takeone dry-run demo.ts           # full recording pace, one contact sheet image
-npx takeone record demo.ts            # recordings/demo-<time>/output.mp4
-```
-
-Steps that bring the page back to an earlier state, like opening a menu and closing it again, are dropped from the export automatically. `npx takeone journal` shows where every step landed and lets you keep or drop any of them.
-
-A dry run paces the page exactly like the recording, so if the dry run passes, the recording will too. Check the contact sheet before you record.
-
-## Scenarios
-
-The export is a plain TypeScript file, and you can edit it by hand:
-
-```ts
-import { defineScenario } from "takeone";
-
-export default defineScenario({ name: "create-project" }, async (s) => {
-  await s.goto("http://localhost:3000/projects");
-  await s.ready();
-
-  await s.startRecording();
-  await s.type({ role: "textbox", name: "Project name" }, "acme-prod");
-  await s.click({ role: "button", name: "Create project" });
-  await s.waitFor({ role: "status", name: /ready/i }, { timeout: 120000 });
-  await s.zoom({ role: "status", name: /ready/i });
-  await s.wait(1500);
-  await s.zoomOut();
-  await s.stopRecording();
-});
-```
-
-Anything before `startRecording()` stays out of the video. Targets name what an element is, `{ role, name }`, rather than where it sits in the DOM, so a scenario keeps working through markup changes.
-
-Re-exporting into the same file only replaces the steps between the `// takeone:steps-begin` and `// takeone:steps-end` markers. Your config, helpers and edits outside those markers are kept.
-
-The full API, with every method, option and config key, is in [`skills/takeone/references/scenario-api.md`](skills/takeone/references/scenario-api.md).
-
-## The look
-
-Capture and output are configured separately. The default captures a 1920x1080 browser at 2x, so zooms stay sharp, and renders a 1080p, 60 fps MP4. For 4K, raise `output` to 3840x2160 and capture at `deviceScaleFactor: 3`.
-
-```ts
-defineScenario({
-  name: "demo",
-  frame: { padding: 96, background: "linear-gradient(135deg, #1e1b4b, #be185d)", borderRadius: 16 },
-  cursor: { size: "large", clickRipple: true },
-  zoom: { auto: true, autoScale: 1.6 },
-  keys: { mode: "shortcuts" },
-  output: { width: 1920, height: 1080, fps: 60 },
-}, async (s) => { /* … */ });
-```
-
-A recording keeps its raw frames, so `npx takeone render recordings/demo-<time>` renders it again with a different background, cursor or size. Nothing is recorded again.
-
-Waits play in real time by default, because a 20 second deploy is part of the story. `s.lapse(8, () => …)` shows a long wait as a time-lapse. `s.trim(() => …)` cuts it short. A cut never lands in the middle of a zoom.
-
-## Logged-in apps
-
-Put the login in a scenario's `explore.setup`:
-
-```ts
-import { defineScenario, withExplore } from "takeone";
-
-export default withExplore(defineScenario({ name: "login" }, async () => {}), {
-  pages: [],
-  setup: async (page) => {
-    await page.goto("http://localhost:3000/login");
-    await page.fill('input[name="email"]', process.env.DEMO_EMAIL!);
-    await page.fill('input[name="password"]', process.env.DEMO_PASSWORD!);
-    await page.click('button[type="submit"]');
-    await page.waitForURL(/dashboard/);
-  },
-});
-```
-
-Start the rehearsal with it: `npx takeone do goto http://localhost:3000 --scenario login.ts`. The session logs in once. Scenarios exported from that session run the same login before they record.
-
-`npx takeone login --url https://app.example.com -o state.json` saves a real login from a visible browser instead, so it needs a display. Point `browser.storageState` at the file.
-
-## How it works
-
-Playwright drives headless Chromium. Frames come from the DevTools screencast at full resolution, and every pointer move, click, key press, scroll, zoom and wait goes into a `manifest.json`.
-
-The compositor renders the video from that log, split across several browser workers that each encode a segment with ffmpeg. The cursor path and camera moves are computed from the log, not from the capture, so they stay smooth even when the page stutters.
-
-The output is H.264 MP4 by default, or VP9 WebM.
-
-## Limitations
-
-- Web apps only. Native desktop apps aren't supported.
-- Pages that repaint faster than the screencast can encode may drop frames. The cursor and camera are unaffected.
-- Headless Chromium has no GPU, so heavy WebGL pages render slowly.
-- The view doesn't list the hidden text boxes behind code editors and terminals. To type into one, click the editor first, then type with no target.
-
-## Assemble: video from screenshots
-
-`takeone assemble` builds a polished video from a folder of still screenshots — for footage takeone can't capture itself (e.g. screenshots from another browser). Each photo gets Ken Burns motion (zoom in/out, pan), an optional caption bar, fades between segments, and an optional title card.
-
-```bash
-takeone assemble ./frames -o entry.mp4 --title "Giveaway entry"
-```
-
-Without a script it plays the images in sorted order, 3 seconds each, alternating moves. Drop an `assemble.json` next to the frames (or pass `-s`) for full control:
-
-```json
-{
-  "title": "Giveaway entry",
-  "subtitle": "@deshmuk1911",
-  "frames": [
-    { "file": "01-found.png", "caption": "Found the giveaway", "hold": 4, "move": "in" },
-    { "file": "02-liked.png", "caption": "Liked and reposted", "move": "out" }
-  ]
-}
-```
-
-Moves: `in`, `out`, `left`, `right`, `still`. Captions render through a system ffmpeg with drawtext (the bundled ffmpeg-static lacks it, so a full build is auto-detected via `which ffmpeg`).
-
-## Reconstructed recordings: the real compositor, from another browser
-
-When takeone can't attach to the browser that has the footage — a managed or logged-in browser it has no access to — capture one screenshot per stage there and run `takeone reconstruct`. It synthesizes the cursor/click event stream from your action script and renders through the real compositor: smooth cursor, click ripples, shot-level camera, crossfades, and the padded Screen Studio frame.
-
-```bash
-takeone reconstruct input.json -o entry.mp4
+takeone reconstruct input.json -o demo.mp4
 ```
 
 `input.json`:
 
 ```json
 {
+  "source": { "type": "muse-managed-browser", "session": "main" },
   "viewport": { "width": 1919, "height": 992 },
   "screenshotsDir": "frames",
   "frames": [
     {
       "file": "01-open.png",
       "holdMs": 3000,
-      "caption": "Open the post",
+      "caption": "Open the repo",
       "actions": [
         { "kind": "click", "x": 1520, "y": 147, "pauseMs": 900 },
         { "kind": "click", "x": 300, "y": 700 }
       ]
     },
     {
-      "file": "02-liked.png",
+      "file": "02-merged.png",
       "holdMs": 2600,
-      "caption": "Liked and reposted",
-      "actions": [{ "kind": "type", "x": 800, "y": 450, "text": "done, entered!" }]
+      "caption": "Merged",
+      "actions": [{ "kind": "type", "x": 800, "y": 450, "text": "shipped" }]
     }
   ]
 }
 ```
 
 Actions run in order while their frame is up: the cursor glides along an eased curved path to each target, clicks, or types. If the actions take longer than `holdMs`, the frame extends automatically.
+
+The `source` field records provenance. Pass `--require-source muse-managed-browser` and the build fails loudly if the input wasn't captured from Muse's managed browser — no silent fresh-Chromium footage, ever:
+
+```bash
+takeone reconstruct input.json --require-source muse-managed-browser -o demo.mp4
+```
 
 **Camera philosophy: SHOT = CAMERA MOVE.** Reconstructed mode plans the camera in settled shots, not clicks. Nearby interactions share one framing — the camera moves once, settles before the first click, and holds through the UI mutations. Screenshot cuts never move the camera; each cut plays a short output-time crossfade. When the next target leaves the shot's visual region, the camera reframes directly into the next shot — never zoom-out, pause, zoom-in. Only the final shot releases back to the overview.
 
@@ -262,6 +82,27 @@ Notes from practice:
 - Describe the result honestly as reconstructed from real screenshots (real frames, rebuilt cursor path), never as a captured live recording.
 
 **Advanced:** `reconstruct` writes a plain `manifest.json` with `mode: "reconstructed"` into its working dir. You can hand-build or tweak that manifest instead — the shot planner (`src/reconstruct/shots.ts`) runs on any manifest with the mode set, and accepts explicit `shots` to override the planning entirely. Calmer-than-native defaults live in `RECONSTRUCTION_DEFAULTS` (`src/config.ts`).
+
+## Everything else takeone does
+
+The original takeone workflow is fully intact for agents that drive their own browser:
+
+- **Rehearse & record** — `takeone do` drives a live browser step by step, `session export` turns the rehearsal into a TypeScript scenario, `record` renders it. Targets name what an element is (`{ role, name }`), not where it sits in the DOM.
+- **Scenarios** — the export is a plain TypeScript file you can edit by hand. Full API in [`skills/takeone/references/scenario-api.md`](skills/takeone/references/scenario-api.md).
+- **Assemble** — `takeone assemble ./frames` builds a polished video from still screenshots with Ken Burns motion, caption bars, fades, and an optional title card. For footage that needs motion but not a cursor.
+- **MCP server** — `npx -y takeone mcp` gives agents screenshot-carrying tool calls; shares one browser with the CLI.
+- **The look** — capture and output configured separately. Default: 1920x1080 capture at 2x, 1080p 60 fps H.264 output, padded frame, large cursor with click ripples, eased auto-zoom.
+
+```bash
+npm i -D takeone
+npx takeone setup   # downloads Chromium once (~650 MB), checks ffmpeg
+```
+
+## How it works
+
+Playwright drives headless Chromium. Frames come from the DevTools screencast at full resolution, and every pointer move, click, key press, scroll, zoom and wait goes into a `manifest.json`. The compositor renders the video from that log, split across several browser workers that each encode a segment with ffmpeg. The cursor path and camera moves are computed from the log, not from the capture, so they stay smooth even when the page stutters. Output is H.264 MP4 by default, or VP9 WebM.
+
+Limitations: web apps only; pages that repaint faster than the screencast can encode may drop frames (cursor and camera unaffected); headless Chromium has no GPU, so heavy WebGL renders slowly.
 
 ## License
 
