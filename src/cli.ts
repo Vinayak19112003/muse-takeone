@@ -9,6 +9,7 @@ import { recordScenario, dryRunScenario } from "./runner/index.js";
 import { exploreScenario } from "./runner/explore.js";
 import { renderRecording } from "./compositor/render.js";
 import { assembleVideo } from "./assemble.js";
+import { writeReconstructionDir, type ReconstructionInput } from "./reconstruct/build.js";
 import { chromiumInfo, launchBrowser, connectToSession } from "./browser.js";
 import {
   DEFAULT_SESSION_PORT,
@@ -384,6 +385,34 @@ sharedOpts(
 ).action(async (dir: string, o) => {
   const res = await renderRecording({ recordingDir: dir, outFile: o.out, config: parseOverrides(o), contactSheet: o.contactSheet, log, onProgress: progress });
   console.log(JSON.stringify({ video: res.outFile, keyframes: res.contactSheet, durationMs: res.durationMs }, null, 2));
+});
+
+sharedOpts(
+  program
+    .command("reconstruct")
+    .description("Build a polished video from real screenshots plus an action script (Muse-managed-browser workflow)")
+    .argument("<input>", "reconstruction input JSON: viewport, screenshotsDir, frames with clicks/types/captions")
+    .option("-o, --out <file>", "output video file (default <input-dir>/reconstruct-output.mp4)")
+    .option("--work-dir <dir>", "working directory for manifest + copied frames (default <input-dir>/.reconstruct)")
+    .option("--keep-work-dir", "do not delete the working directory after rendering")
+    .option("--no-contact-sheet", "skip the keyframe sheet"),
+).action(async (inputFile: string, o) => {
+  const { rmSync } = await import("node:fs");
+  const inputPath = resolve(inputFile);
+  const input = JSON.parse(readFileSync(inputPath, "utf8")) as ReconstructionInput;
+  const baseDir = dirname(inputPath);
+  const workDir = resolve(o.workDir ?? join(baseDir, ".reconstruct"));
+  try {
+    const { manifest } = writeReconstructionDir({ input, baseDir, workDir, config: parseOverrides(o), log });
+    const outFile = resolve(o.out ?? join(baseDir, "reconstruct-output.mp4"));
+    const res = await renderRecording({ recordingDir: workDir, outFile, config: parseOverrides(o), contactSheet: o.contactSheet, log, onProgress: progress });
+    console.log(JSON.stringify({ video: res.outFile, keyframes: res.contactSheet, durationMs: res.durationMs, frames: manifest.frames.length }, null, 2));
+  } catch (e) {
+    log(`reconstruct failed: ${(e as Error).message}`);
+    process.exitCode = 1;
+  } finally {
+    if (!o.keepWorkDir) rmSync(workDir, { recursive: true, force: true });
+  }
 });
 
 program
