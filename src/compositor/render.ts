@@ -38,6 +38,12 @@ interface FrameInstruction {
   uiScale: number;
   hud: KeyHud | null;
   caption: string | null;
+  /**
+   * Crossfade progress right after a frame cut: 0 = previous frame fully
+   * visible, 1 = new frame fully visible. Null when no cut happened in the
+   * last MIX_MS, so stills hold without blending.
+   */
+  mix: number | null;
 }
 
 /** Active narrative caption at source time t, or null. */
@@ -86,11 +92,17 @@ export async function renderRecording(opts: RenderOptions): Promise<RenderResult
   // background included, scales about the target the way Screen Studio does.
   const toComp = (p: Point) => ({ x: content.x + p.x * uiScale, y: content.y + p.y * uiScale });
   let prevSrc = -1;
+  let prevFi = -1;
+  let cutT = 0;
+  const MIX_MS = 240; // crossfade length after each frame cut
   let followOffset: Point = { x: 0, y: 0 };
   const k = 1 - Math.pow(0.001, 1 / fps / 0.35); // ~350ms time constant for follow easing
   for (let i = 0; i < totalFrames; i++) {
     const tSrc = outToSource(ranges, (i * 1000) / fps);
     const fi = frameIndexAt(manifest.frames, tSrc);
+    if (fi !== prevFi) { cutT = tSrc; prevFi = fi; }
+    const mixAge = tSrc - cutT;
+    const mix = mixAge < MIX_MS ? mixAge / MIX_MS : null;
     const cam = camAt(tSrc);
     const s = cam.scale;
     const cur = toComp(cursorAt(samples, tSrc));
@@ -126,6 +138,7 @@ export async function renderRecording(opts: RenderOptions): Promise<RenderResult
       uiScale: uiScale * Math.sqrt(s),
       hud: keyHudAt(keyToasts, tSrc),
       caption: captionAt(manifest.captions, tSrc),
+      mix,
     });
   }
 

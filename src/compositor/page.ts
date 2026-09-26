@@ -70,9 +70,15 @@ export const compositorHtml = `<!doctype html>
   }
 
   // Full frame: load source, draw, and return the encoded image as base64.
+  // Keeps the previously drawn image for the whole MIX_MS blend window so
+  // __draw can crossfade between cuts (not just on the first frame after).
+  let blendImg = null;
   window.__render = async (f, lossless) => {
+    if (imgFile !== f.file && img) blendImg = img; // stash the outgoing image at a cut
     await window.__loadFrame(f.file);
-    window.__draw(f);
+    const blending = f.mix != null && f.mix < 1;
+    window.__draw(f, blending ? blendImg : null);
+    if (!blending) blendImg = null; // release once the blend completes
     const blob = await new Promise((r) => canvas.toBlob(r, lossless ? 'image/png' : 'image/jpeg', 0.95));
     const u = new Uint8Array(await blob.arrayBuffer());
     let bin = '';
@@ -80,8 +86,8 @@ export const compositorHtml = `<!doctype html>
     return btoa(bin);
   };
 
-  // f: { cam:{px,py,scale}, cursor:{x,y,pressed,visible}, ripples:[{x,y,p}], uiScale }
-  window.__draw = (f) => {
+  // f: { cam:{px,py,scale}, cursor:{x,y,pressed,visible}, ripples:[{x,y,p}], uiScale, mix }
+  window.__draw = (f, prevImg) => {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
     const C = cfg.content;
@@ -102,6 +108,14 @@ export const compositorHtml = `<!doctype html>
       if (x1 > x0 && y1 > y0) {
         const fx = img.naturalWidth / C.w, fy = img.naturalHeight / C.h;
         ctx.drawImage(img, (x0 - C.x) * fx, (y0 - C.y) * fy, (x1 - x0) * fx, (y1 - y0) * fy, x0, y0, x1 - x0, y1 - y0);
+        // Crossfade from the previous frame right after a cut: the old image
+        // fades out on top of the new one over MIX_MS, under the same camera.
+        if (prevImg && f.mix != null && f.mix < 1) {
+          ctx.globalAlpha = 1 - f.mix;
+          const ofx = prevImg.naturalWidth / C.w, ofy = prevImg.naturalHeight / C.h;
+          ctx.drawImage(prevImg, (x0 - C.x) * ofx, (y0 - C.y) * ofy, (x1 - x0) * ofx, (y1 - y0) * ofy, x0, y0, x1 - x0, y1 - y0);
+          ctx.globalAlpha = 1;
+        }
       }
     }
     ctx.restore();
