@@ -56,7 +56,10 @@ function defaultOutDir(scenarioFile: string, name?: string) {
 }
 
 const program = new Command();
-program.name("takeone").description(pkg.description).version(pkg.version);
+// The primary CLI name is `muse-takeone`; `takeone` remains as a backwards-compatible
+// alias (both bins point at this file). Show whichever name the user invoked.
+const invokedAs = basename(process.argv[1] ?? "").replace(/\.js$/, "");
+program.name(invokedAs === "takeone" ? "takeone" : "muse-takeone").description(pkg.description).version(pkg.version);
 
 const sharedOpts = (cmd: Command) =>
   cmd
