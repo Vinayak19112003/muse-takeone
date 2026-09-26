@@ -245,10 +245,14 @@ takeone render ./recording -o entry.mp4
 
 Notes from practice:
 
-- Dense cursor samples (every ~16ms along eased paths) make the motion look captured, not scripted. Frame cuts go just after each click's mouseup.
-- Screenshots usually contain the OS cursor baked in — locate it per frame and paint it out before rendering, or the video shows two cursors.
+- Dense cursor samples (every ~16ms along eased, slightly curved paths) make the motion look captured, not scripted. Frame cuts go just after each click's mouseup, and every cut now plays a 240ms crossfade into the next state — no hard jumps.
+- Ground every click target from its own screenshot instead of hand-placing it. Visual-grounding tools typically return 0–1000 normalized coordinates, so convert before use: `px = x / 1000 × width`, `py = y / 1000 × height`.
+- Screenshots usually contain the OS cursor baked in — locate it per frame and paint it out (a ~44px mask around the tip works; use a tighter polygon where UI sits under the cursor) before rendering, or the video shows two cursors.
+- Keep the zoom calm between rapid clicks: `autoHold: 600, autoLead: 400` stops the camera flickering when two actions land close together.
 - `captions` draws a fixed pill at the bottom of the screen (unaffected by the camera), styled like the key HUD — one per step keeps the story readable.
 - `keys.mode: "all"` shows typed characters as a growing pill, which reads as live typing over an empty text field.
+- Point takeone at a system Chrome to skip the ~650MB Playwright download at render time: `TAKEONE_CHROMIUM_PATH=/opt/meta-chromium/chrome takeone render …`.
+- Before calling a render done: confirm specs with ffprobe, extract frames mid-cut to see the blend actually playing, spot-check click moments for cursor-on-target, and scan for double cursors or inpainting damage.
 - Describe the result honestly as reconstructed from real screenshots (real frames, rebuilt cursor path), never as a captured live recording.
 
 ## License
