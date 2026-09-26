@@ -534,7 +534,8 @@ program
 program
   .command("doctor")
   .description("Check the machine can render: node, ffmpeg, Chromium renderer, disk space, write permissions")
-  .action(async () => {
+  .option("--json", "machine-readable output")
+  .action(async (o: { json?: boolean }) => {
     const lines: { ok: boolean; label: string; detail: string }[] = [];
     const major = Number(process.versions.node.split(".")[0]);
     lines.push({ ok: major >= 20, label: "node", detail: `${process.versions.node} ${major >= 20 ? "(>= 20 ok)" : "(need >= 20)"}` });
@@ -571,9 +572,11 @@ program
       lines.push({ ok: false, label: "write", detail: (e as Error).message });
     }
     let allOk = true;
-    for (const l of lines) {
-      console.log(`${l.ok ? "ok  " : "FAIL"} ${l.label}: ${l.detail}`);
-      if (!l.ok) allOk = false;
+    for (const l of lines) if (!l.ok) allOk = false;
+    if (o.json) {
+      console.log(JSON.stringify({ ok: allOk, checks: lines }, null, 2));
+    } else {
+      for (const l of lines) console.log(`${l.ok ? "ok  " : "FAIL"} ${l.label}: ${l.detail}`);
     }
     process.exitCode = allOk ? 0 : 1;
   });
@@ -652,21 +655,6 @@ program
     await launched.close();
     console.log(JSON.stringify({ state: resolve(o.out) }));
     process.exit(0);
-  });
-
-program
-  .command("doctor")
-  .description("Check Chromium and ffmpeg availability")
-  .option("--chromium <path>")
-  .action((o) => {
-    const cfg = resolveConfig({ browser: { executablePath: o.chromium } });
-    let chromium: any;
-    try {
-      chromium = chromiumInfo(cfg.browser);
-    } catch (e) {
-      chromium = { error: (e as Error).message };
-    }
-    console.log(JSON.stringify({ chromium, ffmpeg: ffmpegVersion() ?? "missing", node: process.version, platform: process.platform }, null, 2));
   });
 
 program

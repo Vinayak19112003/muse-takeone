@@ -4,7 +4,7 @@
  * landing mid-camera-move, ...). Runs on the manifest, so `validate` and
  * `inspect` get it without rendering.
  */
-import { planReconstructionCamera, shotBusyWindows } from "./shots.js";
+import { planReconstructionCamera } from "./shots.js";
 import type { ReconstructionInput } from "./build.js";
 import type { RecordingManifest } from "../types.js";
 
@@ -65,11 +65,14 @@ export function qaReconstruction(input: ReconstructionInput, manifest: Recording
     }
   }
 
-  // Clicks landing while the camera is still moving.
-  const busy = shotBusyWindows(keys);
+  // Clicks landing while the camera is still moving. Ease-out moves are perceptually
+  // settled in their last quarter, so only the first 75% of a zoom-in counts as "moving".
+  const moving = keys
+    .filter((k) => k.target.scale > 1.01)
+    .map((k) => [k.t, k.t + k.duration * 0.75] as [number, number]);
   for (const e of events) {
     if (e.type !== "mousedown") continue;
-    if (busy.some(([s, en]) => e.t > s && e.t < en)) {
+    if (moving.some(([s, en]) => e.t > s && e.t < en)) {
       warnings.push(
         `camera still moving at click (${e.x}, ${e.y}) t=${e.t}ms: ` +
           `the click lands mid-reframe, which reads as jitter. Increase settle time or move the shot earlier.`,

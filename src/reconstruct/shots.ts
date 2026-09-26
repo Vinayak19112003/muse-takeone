@@ -57,24 +57,31 @@ interface FocusGroup {
 
 /**
  * Group focus events into shots. Two interactions share a shot when they happen within
- * `groupGap` ms of each other AND the new target falls inside the current shot's useful
- * visual region (the inner ~70% of the routine-scale view). A far-away target starts a
- * new shot even when it arrives quickly: that becomes a smooth reframe, never a
- * zoom-out/zoom-in pair.
+ * `groupGap` ms of each other AND one routine-scale framing can cover both: the
+ * bounding box of the group's points plus the new point (with padding) must fit inside
+ * ~95% of the routine-scale view. A far-away target starts a new shot even when it
+ * arrives quickly: that becomes a smooth reframe, never a zoom-out/zoom-in pair.
+ *
+ * The bbox test (instead of a radius around the group centre) keeps natural pairs
+ * together: click-into-field then typing 400px away still share one framing, while a
+ * sidebar -> central-content jump does not.
  */
 export function groupFocusEvents(foci: FocusEvent[], cfg: ScenarioConfig, vw: number, vh: number): FocusGroup[] {
   const r = cfg.reconstruction;
   const groups: FocusGroup[] = [];
   const viewW = vw / r.routineScale, viewH = vh / r.routineScale;
+  const pad = Math.min(vw, vh) * 0.08;
   for (const f of foci) {
     const g = groups[groups.length - 1];
     const last = g?.points[g.points.length - 1];
-    const nearby =
-      g !== undefined &&
-      last !== undefined &&
-      f.t - last.t <= r.groupGap &&
-      Math.abs(f.x - g.cx) < viewW * 0.35 &&
-      Math.abs(f.y - g.cy) < viewH * 0.35;
+    let nearby = false;
+    if (g !== undefined && last !== undefined && f.t - last.t <= r.groupGap) {
+      const xs = g.points.map((p) => p.x).concat(f.x);
+      const ys = g.points.map((p) => p.y).concat(f.y);
+      const bw = Math.max(...xs) - Math.min(...xs) + pad * 2;
+      const bh = Math.max(...ys) - Math.min(...ys) + pad * 2;
+      nearby = bw <= viewW * 0.95 && bh <= viewH * 0.95;
+    }
     if (nearby && g && last) {
       g.points.push(f);
       g.cx = g.points.reduce((s, p) => s + p.x, 0) / g.points.length;

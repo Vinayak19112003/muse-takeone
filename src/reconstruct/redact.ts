@@ -64,7 +64,7 @@ export function applyRedactions(
       );
     } else {
       parts.push(
-        `[${cur}]crop=${r.w}:${r.h}:${r.x}:${r.y},boxblur=luma_radius=14:luma_power=2[fg${i}];` +
+        `[${cur}]crop=${r.w}:${r.h}:${r.x}:${r.y},boxblur=luma_radius=10:luma_power=3[fg${i}];` +
           `[${cur}][fg${i}]overlay=${r.x}:${r.y}[${out}]`,
       );
     }
