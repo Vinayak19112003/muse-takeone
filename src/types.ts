@@ -281,4 +281,10 @@ export interface RecordingManifest {
   events: RecordedEvent[];
   /** Total wall-clock duration of the capture, ms. */
   duration: number;
+  /**
+   * Optional narrative captions, drawn as a fixed pill at the bottom of the
+   * screen (unaffected by the camera), like the key HUD. Times are ms on the
+   * source timeline.
+   */
+  captions?: { start: number; end: number; text: string }[];
 }

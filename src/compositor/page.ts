@@ -135,8 +135,27 @@ export const compositorHtml = `<!doctype html>
       ctx.restore();
     }
     if (f.hud) drawHud(f.hud);
+    if (f.caption) drawCaption(f.caption);
     return true;
   };
+
+  // Narrative caption pill, fixed on screen (not affected by the camera).
+  // Sits near the bottom edge, below the key HUD when both are visible.
+  function drawCaption(text) {
+    const fs = 34, padX = 30, padY = 15;
+    ctx.save();
+    ctx.font = '600 ' + fs + 'px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif';
+    ctx.textBaseline = 'middle';
+    const pillW = ctx.measureText(text).width + padX * 2, pillH = fs + padY * 2;
+    const x = (W - pillW) / 2, y = H - 44 - pillH;
+    ctx.shadowBlur = 24; ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowOffsetY = 4;
+    ctx.fillStyle = 'rgba(18,18,22,0.85)';
+    roundRect(x, y, pillW, pillH, pillH / 2); ctx.fill();
+    ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    ctx.fillStyle = '#fff';
+    ctx.fillText(text, x + padX, y + pillH / 2 + 2);
+    ctx.restore();
+  }
 
   // Screen Studio style key pill, fixed on screen (not affected by the camera).
   function drawHud(h) {

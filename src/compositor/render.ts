@@ -37,6 +37,14 @@ interface FrameInstruction {
   ripples: { x: number; y: number; p: number }[];
   uiScale: number;
   hud: KeyHud | null;
+  caption: string | null;
+}
+
+/** Active narrative caption at source time t, or null. */
+function captionAt(captions: { start: number; end: number; text: string }[] | undefined, t: number): string | null {
+  if (!captions) return null;
+  for (const c of captions) if (t >= c.start && t < c.end) return c.text;
+  return null;
 }
 
 /**
@@ -117,6 +125,7 @@ export async function renderRecording(opts: RenderOptions): Promise<RenderResult
       ripples,
       uiScale: uiScale * Math.sqrt(s),
       hud: keyHudAt(keyToasts, tSrc),
+      caption: captionAt(manifest.captions, tSrc),
     });
   }
 
