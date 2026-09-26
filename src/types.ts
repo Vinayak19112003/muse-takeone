@@ -90,6 +90,39 @@ export interface ZoomConfig {
   followCursor: boolean;
 }
 
+/**
+ * Tuning for reconstructed recordings (mode: "reconstructed"): sparse screenshots plus
+ * synthetic cursor/click/key events, where the camera philosophy is SHOT = CAMERA MOVE
+ * instead of CLICK = CAMERA MOVE. Several related interactions share one settled camera
+ * shot; the camera only moves when the next important target leaves the current shot's
+ * useful visual region.
+ */
+export interface ReconstructionConfig {
+  /**
+   * Two interactions belong to the same camera shot when they happen within this many ms
+   * of each other AND their targets are visually nearby. Separate from how long a shot
+   * holds after its final interaction. Default 3000.
+   */
+  groupGap: number;
+  /** Routine zoom scale for single-target shots. High zoom is reserved for genuinely small UI. Default 1.35. */
+  routineScale: number;
+  /** How long the camera takes to move into a shot, in output ms. Default 900. */
+  transitionMs: number;
+  /** How long before an interaction the camera must already be settled, in ms. Default 200. */
+  settleMs: number;
+  /** How long a shot holds after its final interaction before releasing to overview, in ms. Default 2000. */
+  releaseMs: number;
+}
+
+/**
+ * Screenshot-to-screenshot transition tuning. The crossfade is measured in output
+ * (final video) ms so it stays correct under trimming and time-lapse.
+ */
+export interface TransitionConfig {
+  /** Crossfade duration after a screenshot cut, in output ms. Default 240. */
+  duration: number;
+}
+
 export interface MotionConfig {
   /** Cursor travel speed: a preset (`slow` 0.6, `normal` 0.9, `fast` 1.6 CSS px per ms) or a number. Default "normal". */
   cursorSpeed: CursorSpeedPreset | number;
@@ -210,6 +243,10 @@ export interface ScenarioConfig {
   frame: FrameConfig;
   cursor: CursorConfig;
   zoom: ZoomConfig;
+  /** Camera tuning for reconstructed recordings. Only used when the manifest mode is "reconstructed". */
+  reconstruction: ReconstructionConfig;
+  /** Screenshot-to-screenshot crossfade tuning. */
+  transition: TransitionConfig;
   motion: MotionConfig;
   idleTrim: IdleTrimConfig;
   browser: BrowserConfig;
@@ -269,8 +306,38 @@ export interface FrameIndexEntry {
   file: string;
 }
 
+/**
+ * One settled camera shot in a reconstructed recording. A shot may cover several related
+ * interactions; the camera moves once into the shot and stays there until the story needs
+ * a different visual region. Times are ms on the source timeline.
+ */
+export interface CameraShot {
+  /** Source ms: the camera begins moving toward this shot. */
+  start: number;
+  /** Source ms: the shot ends; the camera may move on (or release to overview). */
+  end: number;
+  /** Shot centre in viewport CSS px. */
+  cx: number;
+  cy: number;
+  /** Shot scale. */
+  scale: number;
+  /** Move duration into this shot, in output ms. Defaults to the reconstruction config. */
+  transitionDuration?: number;
+  /** Easing into this shot. Defaults to the zoom config easing. */
+  easing?: Easing;
+}
+
+export type RecordingMode = "native" | "reconstructed";
+
 export interface RecordingManifest {
   version: 1;
+  /**
+   * "native" (default): captured by TakeOne's own browser; camera follows the classic
+   * click-driven auto-zoom. "reconstructed": sparse screenshots plus synthetic events
+   * (e.g. from a managed browser TakeOne cannot attach to); the camera is planned in
+   * settled shots that each cover several related interactions.
+   */
+  mode?: RecordingMode;
   createdAt: string;
   config: ScenarioConfig;
   /** CSS viewport size the page was rendered at. */
@@ -281,6 +348,11 @@ export interface RecordingManifest {
   events: RecordedEvent[];
   /** Total wall-clock duration of the capture, ms. */
   duration: number;
+  /**
+   * Explicit camera shots for reconstructed recordings. When present (and mode is
+   * "reconstructed"), the shot planner is skipped and these are used directly.
+   */
+  shots?: CameraShot[];
   /**
    * Optional narrative captions, drawn as a fixed pill at the bottom of the
    * screen (unaffected by the camera), like the key HUD. Times are ms on the
