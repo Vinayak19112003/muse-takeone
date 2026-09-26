@@ -411,7 +411,7 @@ export function keyLabels(key: string, platform: "mac" | "windows"): string[] {
   return parts.map((p) => g[p] ?? (p.length === 1 ? p.toUpperCase() : p.replace(/^Key/, "").replace(/^Digit/, "")));
 }
 
-const isSpecial = (key: string) => key.includes("+") || key.length > 1;
+const isSpecial = (key: string) => key.includes("+") || [...key].length > 1;
 
 export function planKeyToasts(events: RecordedEvent[], cfg: ScenarioConfig): KeyToast[] {
   const k = cfg.keys;

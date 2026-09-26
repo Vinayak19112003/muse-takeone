@@ -291,6 +291,7 @@ export type RecordedEvent =
   | { type: "mouseup"; t: number; x: number; y: number; button: string }
   | { type: "key"; t: number; key: string; x?: number; y?: number; source?: "press" | "type"; show?: boolean }
   | { type: "scroll"; t: number; dx: number; dy: number }
+  | { type: "hover"; t: number; x: number; y: number }
   | { type: "zoom"; t: number; target: CameraTarget; duration: number; easing: Easing; follow?: boolean; source: "manual" | "auto" }
   | { type: "zoomOut"; t: number; duration: number; easing: Easing; source: "manual" | "auto" }
   | { type: "autoZoomOff"; t: number }
@@ -304,6 +305,13 @@ export interface FrameIndexEntry {
   t: number;
   /** File name inside the frames directory. */
   file: string;
+  /**
+   * How the video arrives at this frame from the previous one (reconstructed
+   * recordings). Default "crossfade". "cut" is instant; a slide moves the old
+   * screenshot by (dx, dy) source px while the new one fades in — used for
+   * scrolls so the direction of movement reads on screen.
+   */
+  transitionIn?: "crossfade" | "cut" | { kind: "slide"; dx: number; dy: number };
 }
 
 /**
@@ -347,6 +355,15 @@ export interface ReconstructionSource {
   type: ReconstructionSourceType;
   /** Which session the screenshots came from, e.g. "main". */
   session?: string;
+  /**
+   * What captured the screenshots, e.g. "muse". Declarative, not verified:
+   * nothing in a PNG proves which tool wrote it.
+   */
+  captureTool?: string;
+  /** ISO 8601 timestamp of the capture session, e.g. "2026-09-27T10:00:00+05:30". */
+  capturedAt?: string;
+  /** Viewport the screenshots were captured at; should match the input viewport. */
+  viewport?: { width: number; height: number };
   /** Free-form note, e.g. how the screenshots were materialized. */
   note?: string;
 }

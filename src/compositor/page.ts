@@ -123,10 +123,21 @@ export const compositorHtml = `<!doctype html>
         ctx.drawImage(img, (x0 - C.x) * fx, (y0 - C.y) * fy, (x1 - x0) * fx, (y1 - y0) * fy, x0, y0, x1 - x0, y1 - y0);
         // Crossfade from the previous frame right after a cut: the old image
         // fades out on top of the new one over MIX_MS, under the same camera.
+        // With f.slide (scroll transitions), the old image also slides in the
+        // scroll direction so the movement reads on screen.
         if (prevImg && f.mix != null && f.mix < 1) {
           ctx.globalAlpha = 1 - f.mix;
+          const sp = f.mix * f.mix * (3 - 2 * f.mix); // smoothstep the slide
+          const sx = (f.slide?.x ?? 0) * sp, sy = (f.slide?.y ?? 0) * sp;
           const ofx = prevImg.naturalWidth / C.w, ofy = prevImg.naturalHeight / C.h;
-          ctx.drawImage(prevImg, (x0 - C.x) * ofx, (y0 - C.y) * ofy, (x1 - x0) * ofx, (y1 - y0) * ofy, x0, y0, x1 - x0, y1 - y0);
+          // Widen the culled region by the slide so the moving edge isn't clipped.
+          const pad = Math.max(Math.abs(sx), Math.abs(sy));
+          const qx0 = Math.max(C.x, x0 - pad), qy0 = Math.max(C.y, y0 - pad);
+          const qx1 = Math.min(C.x + C.w, x1 + pad), qy1 = Math.min(C.y + C.h, y1 + pad);
+          ctx.save();
+          ctx.translate(sx, sy);
+          ctx.drawImage(prevImg, (qx0 - C.x) * ofx, (qy0 - C.y) * ofy, (qx1 - qx0) * ofx, (qy1 - qy0) * ofy, qx0, qy0, qx1 - qx0, qy1 - qy0);
+          ctx.restore();
           ctx.globalAlpha = 1;
         }
       }

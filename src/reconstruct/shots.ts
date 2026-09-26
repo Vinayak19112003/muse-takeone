@@ -23,12 +23,27 @@ export interface FocusEvent {
   y: number;
 }
 
-/** Clicks and typing targets, in source-time order. */
+/**
+ * Clicks, typing bursts, and hovers, in source-time order.
+ *
+ * Typing emits one key event per character; only the first character of a burst
+ * becomes a focus event (a burst is >1.2s or >3px away from the previous focus).
+ * Without the dedupe, a 40-character field would plan 40 identical shots.
+ * Hovers are real interactions the viewer must see (tooltips, menus), so they
+ * focus the camera — but they are never treated as clicks downstream.
+ */
 export function extractFocusEvents(manifest: RecordingManifest): FocusEvent[] {
   const foci: FocusEvent[] = [];
+  const isNewBurst = (t: number, x: number, y: number) => {
+    const last = foci[foci.length - 1];
+    return !last || t - last.t > 1200 || Math.hypot(x - last.x, y - last.y) > 3;
+  };
   for (const ev of manifest.events) {
     if (ev.type === "mousedown") foci.push({ t: ev.t, x: ev.x, y: ev.y });
-    else if (ev.type === "key" && ev.x !== undefined && ev.y !== undefined && ev.key !== "insertText") foci.push({ t: ev.t, x: ev.x, y: ev.y });
+    else if (ev.type === "hover") foci.push({ t: ev.t, x: ev.x, y: ev.y });
+    else if (ev.type === "key" && ev.x !== undefined && ev.y !== undefined && isNewBurst(ev.t, ev.x, ev.y)) {
+      foci.push({ t: ev.t, x: ev.x, y: ev.y });
+    }
   }
   foci.sort((a, b) => a.t - b.t);
   return foci;

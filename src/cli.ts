@@ -407,10 +407,23 @@ sharedOpts(
   const baseDir = dirname(inputPath);
   const workDir = resolve(o.workDir ?? join(baseDir, ".reconstruct"));
   try {
+    const { validateReconstructionInput } = await import("./reconstruct/validate.js");
+    const { qaReconstruction, formatQaMetrics } = await import("./reconstruct/qa.js");
+    const v = validateReconstructionInput(input, baseDir);
+    for (const w of v.warnings) log(`warning: ${w.message}`);
+    if (!v.ok) {
+      for (const e of v.errors) log(`error: ${e.message}`);
+      log(`reconstruct failed: input invalid (${v.errors.length} error${v.errors.length === 1 ? "" : "s"})`);
+      process.exitCode = 1;
+      return;
+    }
     const { manifest } = writeReconstructionDir({ input, baseDir, workDir, config: parseOverrides(o), requireSource: o.requireSource, log });
     const outFile = resolve(o.out ?? join(baseDir, "reconstruct-output.mp4"));
     const res = await renderRecording({ recordingDir: workDir, outFile, config: parseOverrides(o), contactSheet: o.contactSheet, log, onProgress: progress });
-    console.log(JSON.stringify({ video: res.outFile, keyframes: res.contactSheet, durationMs: res.durationMs, frames: manifest.frames.length }, null, 2));
+    const qa = qaReconstruction(input, manifest);
+    log(`QA: ${formatQaMetrics(qa.metrics)}`);
+    for (const w of qa.warnings) log(`QA warning: ${w}`);
+    console.log(JSON.stringify({ video: res.outFile, keyframes: res.contactSheet, durationMs: res.durationMs, frames: manifest.frames.length, qa: qa.metrics, qaWarnings: qa.warnings }, null, 2));
   } catch (e) {
     log(`reconstruct failed: ${(e as Error).message}`);
     process.exitCode = 1;
@@ -418,6 +431,152 @@ sharedOpts(
     if (!o.keepWorkDir) rmSync(workDir, { recursive: true, force: true });
   }
 });
+
+program
+  .command("validate")
+  .description("Validate a reconstruction input file without rendering anything")
+  .argument("<input>", "reconstruction input JSON")
+  .action(async (inputFile: string) => {
+    const { validateReconstructionInput } = await import("./reconstruct/validate.js");
+    const inputPath = resolve(inputFile);
+    let raw: unknown;
+    try {
+      raw = JSON.parse(readFileSync(inputPath, "utf8"));
+    } catch (e) {
+      console.error(`invalid JSON: ${(e as Error).message}`);
+      process.exitCode = 1;
+      return;
+    }
+    const { errors, warnings, ok } = validateReconstructionInput(raw, dirname(inputPath));
+    for (const w of warnings) console.error(`warning: ${w.message}`);
+    for (const e of errors) console.error(`error: ${e.message}`);
+    if (ok) console.log(`valid: ${inputPath} (${warnings.length} warning${warnings.length === 1 ? "" : "s"})`);
+    else console.error(`invalid: ${errors.length} error${errors.length === 1 ? "" : "s"}`);
+    process.exitCode = ok ? 0 : 1;
+  });
+
+program
+  .command("inspect")
+  .description("Report what a reconstruction input will produce: source, frames, actions, duration, camera shots, warnings")
+  .argument("<input>", "reconstruction input JSON")
+  .option("--json", "machine-readable output")
+  .option("-c, --config <json>", "JSON config overrides")
+  .action(async (inputFile: string, o: { json?: boolean; config?: string }) => {
+    const { validateReconstructionInput } = await import("./reconstruct/validate.js");
+    const { buildReconstructionManifest } = await import("./reconstruct/build.js");
+    const { qaReconstruction, formatQaMetrics } = await import("./reconstruct/qa.js");
+    const { planReconstructionCamera } = await import("./reconstruct/shots.js");
+    const { RECONSTRUCTION_DEFAULTS, resolveConfig } = await import("./config.js");
+    const inputPath = resolve(inputFile);
+    const raw = JSON.parse(readFileSync(inputPath, "utf8"));
+    const v = validateReconstructionInput(raw, dirname(inputPath));
+    if (!v.ok) {
+      for (const e of v.errors) console.error(`error: ${e.message}`);
+      console.error("inspect aborted: fix the errors above (or run `muse-takeone validate` for the full list)");
+      process.exitCode = 1;
+      return;
+    }
+    const cfg = resolveConfig(RECONSTRUCTION_DEFAULTS, o.config ? JSON.parse(o.config) : undefined);
+    const manifest = buildReconstructionManifest(raw, cfg);
+    const qa = qaReconstruction(raw, manifest);
+    const { shots } = planReconstructionCamera(manifest, cfg);
+    const src = raw.source;
+    const frameRows = raw.frames.map((f: { file: string; actions?: unknown[]; caption?: string }, i: number) => ({
+      n: i + 1,
+      file: f.file,
+      atMs: manifest.frames[i].t,
+      actions: (f.actions ?? []).length,
+      caption: f.caption ?? null,
+      transitionIn: manifest.frames[i].transitionIn ?? "crossfade",
+    }));
+    const report = {
+      input: inputPath,
+      source: src ?? null,
+      viewport: raw.viewport,
+      frames: frameRows,
+      qa: qa.metrics,
+      cameraShots: shots.map((s, i) => ({
+        n: i + 1,
+        startMs: Math.round(s.start),
+        endMs: Math.round(s.end),
+        cx: Math.round(s.cx),
+        cy: Math.round(s.cy),
+        scale: Number(s.scale.toFixed(2)),
+      })),
+      output: { width: cfg.output.width, height: cfg.output.height, fps: cfg.output.fps, format: cfg.output.format },
+      warnings: [...v.warnings.map((w) => w.message), ...qa.warnings],
+    };
+    if (o.json) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(`input: ${inputPath}`);
+    console.log(`source: ${src ? `${src.type}${src.session ? ` (session ${src.session})` : ""}${src.captureTool ? ` via ${src.captureTool}` : ""}` : "unspecified"}`);
+    console.log(`viewport: ${raw.viewport.width}x${raw.viewport.height}`);
+    console.log(`frames:`);
+    for (const r of frameRows) {
+      console.log(`  ${r.n}. ${r.file} @${(r.atMs / 1000).toFixed(1)}s — ${r.actions} action(s), in: ${typeof r.transitionIn === "string" ? r.transitionIn : r.transitionIn.kind}${r.caption ? ` — "${r.caption}"` : ""}`);
+    }
+    console.log(`expect: ${formatQaMetrics(qa.metrics)}`);
+    console.log(`camera shots (${shots.length}):`);
+    for (const s of report.cameraShots) {
+      console.log(`  ${s.n}. ${s.startMs}..${s.endMs}ms @ (${s.cx}, ${s.cy}) ${s.scale}x`);
+    }
+    console.log(`output: ${cfg.output.width}x${cfg.output.height}@${cfg.output.fps} ${cfg.output.format}`);
+    if (report.warnings.length) {
+      console.log(`warnings (${report.warnings.length}):`);
+      for (const w of report.warnings) console.log(`  - ${w}`);
+    } else {
+      console.log("warnings: none");
+    }
+  });
+
+program
+  .command("doctor")
+  .description("Check the machine can render: node, ffmpeg, Chromium renderer, disk space, write permissions")
+  .action(async () => {
+    const lines: { ok: boolean; label: string; detail: string }[] = [];
+    const major = Number(process.versions.node.split(".")[0]);
+    lines.push({ ok: major >= 20, label: "node", detail: `${process.versions.node} ${major >= 20 ? "(>= 20 ok)" : "(need >= 20)"}` });
+    try {
+      const { resolveFfmpeg, ffmpegVersion } = await import("./ffmpeg.js");
+      const p = resolveFfmpeg();
+      lines.push({ ok: true, label: "ffmpeg", detail: `${ffmpegVersion() ?? "unknown version"} @ ${p}` });
+    } catch (e) {
+      lines.push({ ok: false, label: "ffmpeg", detail: (e as Error).message });
+    }
+    try {
+      const { resolveExecutablePath } = await import("./browser.js");
+      const envPath = process.env.TAKEONE_CHROMIUM_PATH;
+      const p = resolveExecutablePath({ headless: true } as never);
+      lines.push({ ok: true, label: "chromium (renderer)", detail: `${p}${envPath ? " (TAKEONE_CHROMIUM_PATH)" : ""}` });
+    } catch (e) {
+      lines.push({ ok: false, label: "chromium (renderer)", detail: `${(e as Error).message} — set TAKEONE_CHROMIUM_PATH or run setup` });
+    }
+    try {
+      const { execFileSync } = await import("node:child_process");
+      const df = execFileSync("df", ["-k", "."], { encoding: "utf8" }).trim().split("\n").pop()!.split(/\s+/);
+      const availGb = Number(df[3]) / 1024 / 1024;
+      lines.push({ ok: availGb > 1, label: "disk", detail: `${availGb.toFixed(1)} GB free ${availGb > 1 ? "(> 1 GB ok)" : "(low!)"}` });
+    } catch {
+      lines.push({ ok: true, label: "disk", detail: "could not check (non-fatal)" });
+    }
+    try {
+      const { mkdtempSync, rmSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const d = mkdtempSync(join(tmpdir(), "muse-takeone-"));
+      rmSync(d, { recursive: true });
+      lines.push({ ok: true, label: "write", detail: "temp dir writable" });
+    } catch (e) {
+      lines.push({ ok: false, label: "write", detail: (e as Error).message });
+    }
+    let allOk = true;
+    for (const l of lines) {
+      console.log(`${l.ok ? "ok  " : "FAIL"} ${l.label}: ${l.detail}`);
+      if (!l.ok) allOk = false;
+    }
+    process.exitCode = allOk ? 0 : 1;
+  });
 
 program
   .command("assemble")

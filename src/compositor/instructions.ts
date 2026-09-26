@@ -47,6 +47,12 @@ export interface FrameInstruction {
    * transition window, so stills hold without blending. Measured in output ms.
    */
   mix: number | null;
+  /**
+   * Directional slide applied to the previous screenshot during a transition, in
+   * composition px at mix = 1 (scaled by eased mix progress). Used for scrolls so
+   * the direction of movement reads on screen. Undefined for plain crossfades.
+   */
+  slide?: { x: number; y: number };
 }
 
 export interface ClickDown {
@@ -98,6 +104,10 @@ export function planFrameInstructions(input: InstructionPlanInput): FrameInstruc
   // frame in the transition window names `previousFile` — a loop-local would only name it
   // on the cut frame and kill the blend after one frame.
   let transitionFrom: string | undefined;
+  // Slide vector for the active transition, in composition px at mix = 1.
+  let activeSlide: { x: number; y: number } | undefined;
+  // Per-cut transition duration in output ms; "cut" transitions use 0 (instant).
+  let activeTransitionMs = transitionMs;
   let followOffset: Point = { x: 0, y: 0 };
   const k = 1 - Math.pow(0.001, 1 / fps / 0.35); // ~350ms time constant for follow easing
   for (let i = 0; i < totalFrames; i++) {
@@ -110,10 +120,16 @@ export function planFrameInstructions(input: InstructionPlanInput): FrameInstruc
       transitionFrom = prevFi >= 0 ? frames[prevFi].file : undefined;
       cutOutT = tOut;
       prevFi = fi;
+      const ti = frames[fi].transitionIn;
+      activeTransitionMs = ti === "cut" ? 0 : transitionMs;
+      activeSlide =
+        ti !== undefined && ti !== null && typeof ti === "object" && ti.kind === "slide"
+          ? { x: ti.dx * uiScale, y: ti.dy * uiScale }
+          : undefined;
     }
     const mixAge = tOut - cutOutT;
-    const mix = transitionFrom !== undefined && mixAge < transitionMs ? mixAge / transitionMs : null;
-    if (mix === null) transitionFrom = undefined;
+    const mix = transitionFrom !== undefined && mixAge < activeTransitionMs ? mixAge / activeTransitionMs : null;
+    if (mix === null) { transitionFrom = undefined; activeSlide = undefined; }
     const cam = camAtOut(tOut);
     const s = cam.scale;
     const cur = toComp(cursorAt(samples, tSrc));
@@ -151,6 +167,7 @@ export function planFrameInstructions(input: InstructionPlanInput): FrameInstruc
       hud: keyHudAt(keyToasts, tSrc),
       caption: captionAt(captions, tSrc),
       mix,
+      slide: activeSlide,
     });
   }
   return instructions;
