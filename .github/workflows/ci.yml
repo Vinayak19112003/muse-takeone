@@ -7,7 +7,7 @@ on:
 
 jobs:
   verify:
-    name: typecheck, test, build
+    name: typecheck, test, build, smoke render
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -23,6 +23,14 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # Smoke render: the smallest visual fixture at 640x360@15fps through the
+      # real compositor Chromium. Catches render-pipeline breakage (compositor,
+      # ffmpeg, manifest bugs) that unit tests cannot. ~10s on a CI runner.
+      - run: npx playwright install --with-deps chromium
+      - run: |
+          node dist/cli.js reconstruct tests/fixtures/visual/form/input.json \
+            -o smoke.mp4 --width 640 --height 360 --fps 15 --no-contact-sheet
+          test -s smoke.mp4 && ls -la smoke.mp4
 
 # Visual regression (`npm run visual-qa`) is intentionally NOT in CI: it needs
 # a real Chromium renderer and produces contact-sheet diffs that a maintainer
