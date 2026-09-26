@@ -15,7 +15,7 @@
  *
  * Usage: node tests/fixtures/visual/gen.mjs   (writes tests/fixtures/visual/<name>/)
  */
-import { writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
@@ -55,8 +55,11 @@ function writeInput(dir, frames) {
 // ---------------------------------------------------------------- form
 {
   const dir = join(here, "form");
+  const keepBaseline = join(dir, "baseline.jpg");
+  const baselineBuf = existsSync(keepBaseline) ? readFileSync(keepBaseline) : null;
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(join(dir, "frames"), { recursive: true });
+  if (baselineBuf) writeFileSync(keepBaseline, baselineBuf);
 
   const formHtml = (user, pass) => `<!doctype html><html><head><meta charset="utf-8"><style>
     body{margin:0;background:#0b0e14;color:#e6edf3;font:15px system-ui;display:flex;align-items:center;justify-content:center;height:100vh}
@@ -103,8 +106,11 @@ function writeInput(dir, frames) {
 // ---------------------------------------------------------------- scroll
 {
   const dir = join(here, "scroll");
+  const keepBaseline = join(dir, "baseline.jpg");
+  const baselineBuf = existsSync(keepBaseline) ? readFileSync(keepBaseline) : null;
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(join(dir, "frames"), { recursive: true });
+  if (baselineBuf) writeFileSync(keepBaseline, baselineBuf);
 
   const section = (n, title, text) => `<div class="sec"><div class="kicker">Section ${n}</div><h2>${title}</h2><p>${text}</p></div>`;
   const longHtml = `<!doctype html><html><head><meta charset="utf-8"><style>
@@ -139,8 +145,11 @@ function writeInput(dir, frames) {
 // ---------------------------------------------------------------- nav
 {
   const dir = join(here, "nav");
+  const keepBaseline = join(dir, "baseline.jpg");
+  const baselineBuf = existsSync(keepBaseline) ? readFileSync(keepBaseline) : null;
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(join(dir, "frames"), { recursive: true });
+  if (baselineBuf) writeFileSync(keepBaseline, baselineBuf);
 
   const appHtml = (view) => `<!doctype html><html><head><meta charset="utf-8"><style>
     body{margin:0;background:#f3f4f6;color:#111827;font:14px system-ui;display:flex;height:100vh}
