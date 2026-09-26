@@ -203,6 +203,54 @@ Without a script it plays the images in sorted order, 3 seconds each, alternatin
 
 Moves: `in`, `out`, `left`, `right`, `still`. Captions render through a system ffmpeg with drawtext (the bundled ffmpeg-static lacks it, so a full build is auto-detected via `which ffmpeg`).
 
+## Reconstructed recordings: the real compositor, from another browser
+
+When takeone can't attach to the browser that has the footage — a managed or logged-in browser it has no access to — capture one screenshot per stage there, then synthesize a takeone recording and run it through the real compositor. The result keeps the smooth cursor, click ripples, eased auto-zooms and the padded Screen Studio frame, instead of a plain slideshow.
+
+A recording is a folder with `frames/` (the screenshots) and a `manifest.json`:
+
+```json
+{
+  "version": 1,
+  "viewport": { "width": 1919, "height": 992 },
+  "frameSize": { "width": 1919, "height": 992 },
+  "frames": [
+    { "file": "f01.png", "t": 0 },
+    { "file": "f02.png", "t": 2700 }
+  ],
+  "events": [
+    { "type": "mouse", "t": 2000, "x": 1500, "y": 900 },
+    { "type": "mousedown", "t": 2650, "x": 838, "y": 682, "button": "left" },
+    { "type": "mouseup", "t": 2740, "x": 838, "y": 682, "button": "left" },
+    { "type": "key", "t": 8400, "key": "Z", "source": "type", "x": 700, "y": 763 }
+  ],
+  "duration": 18000,
+  "captions": [
+    { "start": 0, "end": 2700, "text": "Entering a giveaway" },
+    { "start": 2700, "end": 5250, "text": "Step 1 of 4 · Like the post" }
+  ],
+  "config": {
+    "zoom": { "auto": true, "autoScale": 1.7, "autoHold": 600, "autoLead": 400 },
+    "keys": { "mode": "all" },
+    "idleTrim": { "enabled": false }
+  }
+}
+```
+
+Render it:
+
+```bash
+takeone render ./recording -o entry.mp4
+```
+
+Notes from practice:
+
+- Dense cursor samples (every ~16ms along eased paths) make the motion look captured, not scripted. Frame cuts go just after each click's mouseup.
+- Screenshots usually contain the OS cursor baked in — locate it per frame and paint it out before rendering, or the video shows two cursors.
+- `captions` draws a fixed pill at the bottom of the screen (unaffected by the camera), styled like the key HUD — one per step keeps the story readable.
+- `keys.mode: "all"` shows typed characters as a growing pill, which reads as live typing over an empty text field.
+- Describe the result honestly as reconstructed from real screenshots (real frames, rebuilt cursor path), never as a captured live recording.
+
 ## License
 
 MIT
