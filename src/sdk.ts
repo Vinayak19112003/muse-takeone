@@ -91,13 +91,12 @@ export interface WaitOptions {
   pauseMs?: number;
 }
 
-let actionSeq = 0;
-
 /** Omit that distributes over unions, so action literals keep their kind's fields. */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 export class TraceBuilder {
   private trace: TraceReelTrace;
+  private actionSeq = 0;
   private states = new Map<string, AgentState>();
 
   constructor(opts: TraceBuilderOptions) {
@@ -239,7 +238,7 @@ export class TraceBuilder {
       throw new Error(`TraceBuilder: action to unknown state "${a.to}"`);
     }
     const action = { ...a } as unknown as Record<string, unknown>;
-    action.id = `a${++actionSeq}`;
+    action.id = `a${++this.actionSeq}`;
     this.trace.actions!.push(action as unknown as AgentAction);
   }
 }
