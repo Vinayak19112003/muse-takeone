@@ -259,3 +259,45 @@ test("J: --require-source semantics across the normalization boundary", () => {
     /--require-source "nope"/,
   );
 });
+
+test("K: missing final state is counted under missing-state; no global score exists", async () => {
+  const { qaReconstruction } = await import("../src/reconstruct/qa.js");
+  const dir = shotDir();
+  const trace = {
+    version: 1,
+    source: { type: "agent-browser", agent: "muse" },
+    viewport: { width: 1280, height: 800 },
+    frames: [
+      { file: "a.png", holdMs: 500, actions: [{ kind: "click", x: 100, y: 100 }] },
+      { file: "b.png", holdMs: 500, actions: [{ kind: "click", x: 200, y: 200 }] },
+    ],
+  };
+  const { trace: normalized } = normalizeTrace(trace, { adapter: "muse" });
+  const engineInput = traceToReconstructionInput(normalized);
+  const v = validateReconstructionInput(engineInput, dir);
+  assert.equal(v.ok, true);
+  const manifest = buildReconstructionManifest(engineInput, resolveConfig(RECONSTRUCTION_DEFAULTS));
+  const qa = qaReconstruction(engineInput, manifest);
+  assert.equal(qa.warningCounts["missing-state"], 1);
+  assert.ok(qa.categorized.some((w) => w.category === "missing-state"));
+  // No invented global quality score anywhere on the report.
+  assert.ok(!("score" in qa) && !("score" in qa.metrics));
+});
+
+test("K2: very short states are counted under timing", async () => {
+  const { qaReconstruction } = await import("../src/reconstruct/qa.js");
+  const trace = {
+    version: 1,
+    source: { type: "agent-browser", agent: "muse" },
+    viewport: { width: 1280, height: 800 },
+    frames: [
+      { file: "a.png", holdMs: 50, actions: [{ kind: "wait", durationMs: 50 }] },
+      { file: "b.png", holdMs: 3000 },
+    ],
+  };
+  const { trace: normalized } = normalizeTrace(trace, { adapter: "muse" });
+  const engineInput = traceToReconstructionInput(normalized);
+  const manifest = buildReconstructionManifest(engineInput, resolveConfig(RECONSTRUCTION_DEFAULTS));
+  const qa = qaReconstruction(engineInput, manifest);
+  assert.ok(qa.warningCounts.timing >= 1, `expected a timing warning, got ${JSON.stringify(qa.warningCounts)}`);
+});

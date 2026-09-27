@@ -480,9 +480,11 @@ sharedOpts(
       return;
     }
     const res = await renderRecording({ recordingDir: workDir, outFile, config: parseOverrides(o), contactSheet: o.contactSheet, log, onProgress: progress });
+    const { formatWarningCounts } = await import("./reconstruct/qa.js");
     const qa = qaReconstruction(engineInput, manifest);
     log(`QA: ${formatQaMetrics(qa.metrics)}`);
-    for (const w of qa.warnings) log(`QA warning: ${w}`);
+    log(`QA warnings: ${formatWarningCounts(qa.warningCounts)}`);
+    for (const w of qa.categorized) log(`QA warning [${w.category}]: ${w.message}`);
     console.log(JSON.stringify({ video: res.outFile, keyframes: res.contactSheet, durationMs: res.durationMs, frames: manifest.frames.length, qa: qa.metrics, qaWarnings: qa.warnings }, null, 2));
   } catch (e) {
     log(`reconstruct failed: ${(e as Error).message}`);

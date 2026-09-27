@@ -210,7 +210,13 @@ export class TraceBuilder {
   }
 
   wait(opts: WaitOptions): this {
-    this.pushAction({ kind: "wait", from: opts.from, durationMs: opts.durationMs });
+    this.pushAction({
+      kind: "wait",
+      from: opts.from,
+      durationMs: opts.durationMs,
+      // pauseMs is the beat after the wait: the engine calls it nextFrameAfterMs.
+      ...(opts.pauseMs !== undefined ? { nextFrameAfterMs: opts.pauseMs } : {}),
+    });
     return this;
   }
 
