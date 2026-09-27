@@ -1,8 +1,39 @@
 # Changelog
 
-All notable changes to muse-takeone. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+All notable changes to TraceReel (formerly muse-takeone). Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
+
+TraceReel is the agent-neutral evolution of muse-takeone: any supported AI
+browser agent's trace becomes a polished demo video. Muse is the
+tested/reference adapter; Grokbot is planned.
+
+### Added
+
+- TraceReel Trace v1: preferred `states[]` + `actions[]` form (legacy
+  `frames[]` still accepted); `source.type: "agent-browser"` with free-form
+  `source.agent`.
+- Adapter architecture: `MuseAdapter`, `GrokbotAdapter`, `GenericAdapter`.
+  Unknown agent names fall through to the generic adapter — no renderer
+  changes needed for future agents.
+- Capability declarations per adapter (`tracereel capabilities`).
+- Structured machine-readable errors (`TraceReelError`: code, path, message,
+  suggestion).
+- Portable `.tracereel` capture bundles + `tracereel import`.
+- TypeScript `TraceBuilder` SDK.
+- CLI renamed to `tracereel` (`takeone`, `muse-takeone` remain as deprecated
+  aliases); `TRACEREEL_*` environment variables preferred (`TAKEONE_*` still
+  honored as deprecated fallbacks).
+- `docs/TRACE_FORMAT.md`; restructured examples (`examples/generic/`,
+  `examples/muse/`, `examples/grokbot/`); skills under `skills/tracereel/`
+  and `skills/adapters/muse/`.
+
+### Changed
+
+- QA warnings are categorized (`camera`, `timing`, `missing-state`,
+  `viewport`, `other`); no global quality score is fabricated.
+- Bundle layout separates screenshots (`frames/`) from future video-segment
+  assets (`segments/`).
 
 ## [0.1.0] — 2026-09-27
 

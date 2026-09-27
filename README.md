@@ -120,7 +120,7 @@ The original takeone workflow (rehearse live → export scenario → record) is 
 
 `reconstruct` normalizes the trace through the agent adapter, copies the screenshots into a working dir (applying redactions), writes a `manifest.json` with `mode: "reconstructed"`, and synthesizes the 60 Hz cursor/click/key event stream plus camera shots from the state/action plan. The compositor then renders the video from that manifest, split across browser workers that each encode a segment with ffmpeg. Cursor path and camera moves are computed from the log, not from the capture, so they stay smooth even when the page stutters. Output is H.264 MP4 by default, or VP9 WebM.
 
-The render is deterministic: the same trace always produces the same video. Crossfades are measured in output time and every frame names its own images, so parallel workers can't disagree.
+The render is deterministic: the same trace always produces the same video. Crossfades are measured in output time and every frame names its own images, so parallel workers can't disagree. (The intermediate manifest stamps a wall-clock `createdAt` for provenance; it is metadata only and never affects a pixel.)
 
 How it works in detail: [`docs/architecture.md`](docs/architecture.md). The trace format: [`docs/TRACE_FORMAT.md`](docs/TRACE_FORMAT.md). Privacy and security notes: [`docs/privacy.md`](docs/privacy.md). Known limitations: [`docs/limitations.md`](docs/limitations.md).
 

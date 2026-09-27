@@ -485,7 +485,7 @@ export function writeReconstructionDir(opts: BuildReconstructionOptions): { work
   if (src?.session) log(`Source session: ${src.session}`);
   if (src?.captureTool) log(`Capture tool: ${src.captureTool}`);
   if (src?.capturedAt) log(`Captured at: ${src.capturedAt}`);
-  log("Renderer: TakeOne compositor Chromium (local frames only)");
+  log("Renderer: TraceReel compositor Chromium (local frames only)");
   log("Target-site navigation by renderer: none");
   log(`Reconstruction manifest: ${manifest.frames.length} frames, ${manifest.events.length} events -> ${workDir}`);
   return { workDir, manifest };
