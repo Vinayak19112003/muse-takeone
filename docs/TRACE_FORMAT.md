@@ -74,9 +74,52 @@ All coordinates are CSS pixels in the trace's `viewport`. Targets outside the vi
 
 `capabilities` declares what the capturing agent's traces can express, so tooling can warn instead of silently degrading:
 
-`screenshots`, `clickCoordinates`, `typingCoordinates`, `scrollEvents`, `hoverEvents`, `videoSegments`, `cursorFreeScreenshots`.
+`screenshots`, `clickCoordinates`, `typingCoordinates`, `scrollEvents`, `hoverEvents`, `videoSegments`, `cursorFreeScreenshots`, plus the audio flags `narrationAudioGeneration` (the agent can generate narration audio with its own TTS/voice tool — TraceReel itself never provides TTS) and `browserAudio` (genuine captured browser audio; stays false until an agent actually captures it).
 
 Every flag defaults sensibly per adapter (`tracereel capabilities <agent>` shows them); a trace may override them. Unknown agents get the conservative set.
+
+## Narration and music
+
+Traces may carry agent-generated audio. TraceReel never generates voice or
+music — the agent supplies finished files and TraceReel mixes them onto the
+finished video with `tracereel audio` (video stream copied, never re-encoded).
+
+```json
+{
+  "narration": [
+    {
+      "state": "intro",
+      "text": "Meet Groom Room, a simple booking experience for pet grooming.",
+      "audio": "audio/narration/intro.mp3",
+      "generatedBy": { "agent": "muse", "tool": "tts", "provider": "meta-ai" }
+    }
+  ],
+  "audio": {
+    "music": {
+      "file": "audio/music/background.m4a",
+      "volume": 0.10,
+      "loop": true,
+      "fadeInMs": 800,
+      "fadeOutMs": 1200,
+      "duckUnderNarration": true
+    }
+  }
+}
+```
+
+- `narration[].state` — state id (or 0-based frame index as a string for the
+  frames form). The clip starts when the scene starts on the final output
+  timeline; `startMs` is an advanced explicit override.
+- `narration[].audio` — MP3/WAV/M4A file, relative to the trace (or bundle
+  `audio/`). Paths escaping the trace directory are rejected.
+- `narration[].text` — spoken text, used for subtitle cues when present.
+- `narration[].generatedBy` — optional informational provenance (`agent`,
+  `tool`, `provider`, `voice`, `language`, `speed`); never fabricated.
+- `audio.music` — optional background music, looped/trimmed to the video,
+  with volume, fades, and optional ducking under narration.
+
+Video timing is fixed: over-long narration warns (`NARRATION_EXCEEDS_SCENE`)
+instead of stretching scenes. Full reference: [`docs/AUDIO.md`](AUDIO.md).
 
 ## Legacy compatibility
 
