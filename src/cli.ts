@@ -63,10 +63,10 @@ function defaultOutDir(scenarioFile: string, name?: string) {
  * the Muse adapter normalized (agent-browser / agent "muse"). This preserves
  * existing Muse workflows through the v0.x deprecation period.
  */
-async function checkRequireSource(required: string | undefined, trace: TraceReelTrace, engineInput: ReconstructionInput) {
+async function checkRequireSource(required: string | undefined, trace: TraceReelTrace, engineInput: ReconstructionInput, rawSourceType?: string) {
   if (!required) return;
   const { assertRequireSource } = await import("./adapters/normalize.js");
-  assertRequireSource(required, trace, engineInput);
+  assertRequireSource(required, trace, engineInput, rawSourceType);
 }
 
 /**
@@ -84,6 +84,8 @@ async function loadTraceInput(inputFile: string, adapterName?: string) {
   } catch (e) {
     throw new Error(`invalid JSON in ${inputPath}: ${(e as Error).message}`);
   }
+  // Capture before normalizeTrace: adapters may mutate the raw object in place.
+  const rawSourceType = (raw as { source?: { type?: unknown } } | null)?.source?.type as string | undefined;
   const { trace, warnings, adapter } = normalizeTrace(raw, adapterName ? { adapter: adapterName } : undefined);
   for (const w of warnings) log(`warning: ${w}`);
   return {
@@ -92,6 +94,9 @@ async function loadTraceInput(inputFile: string, adapterName?: string) {
     trace,
     adapter,
     engineInput: traceToReconstructionInput(trace),
+    // The source type the file actually declared, before adapter normalization.
+    // --require-source pins declared provenance, so it must see this too.
+    rawSourceType,
   };
 }
 
@@ -466,7 +471,7 @@ sharedOpts(
       process.exitCode = 1;
       return;
     }
-    checkRequireSource(o.requireSource, loaded.trace, engineInput);
+    checkRequireSource(o.requireSource, loaded.trace, engineInput, loaded.rawSourceType);
     const { manifest } = writeReconstructionDir({ input: engineInput, baseDir, workDir, config: parseOverrides(o), log });
     const outFile = resolve(o.out ?? join(baseDir, "reconstruct-output.mp4"));
     if (outFile === inputPath) {

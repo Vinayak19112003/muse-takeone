@@ -301,3 +301,38 @@ test("K2: very short states are counted under timing", async () => {
   const qa = qaReconstruction(engineInput, manifest);
   assert.ok(qa.warningCounts.timing >= 1, `expected a timing warning, got ${JSON.stringify(qa.warningCounts)}`);
 });
+
+test("L: screenshotsDir survives normalization into the engine input", () => {
+  const trace = {
+    version: 1,
+    source: { type: "agent-browser", agent: "muse" },
+    viewport: { width: 1280, height: 800 },
+    screenshotsDir: "frames",
+    states: [
+      { id: "home", screenshot: "01.png" },
+      { id: "done", screenshot: "02.png" },
+    ],
+    actions: [{ kind: "click", from: "home", to: "done", x: 10, y: 10 }],
+  };
+  const { trace: normalized } = normalizeTrace(trace, { adapter: "muse" });
+  assert.equal(normalized.screenshotsDir, "frames");
+  const engineInput = traceToReconstructionInput(normalized);
+  assert.equal(engineInput.screenshotsDir, "frames");
+});
+
+test("M: --require-source matches the raw declared source type after normalization", () => {
+  const trace = {
+    version: 1,
+    source: { type: "manual-screenshots", note: "synthetic fixture" },
+    viewport: { width: 1280, height: 800 },
+    frames: [{ file: "a.png" }],
+  };
+  const { trace: normalized } = normalizeTrace(trace);
+  const engineInput = traceToReconstructionInput(normalized);
+  // Normalized to agent-browser/unknown; the raw declaration still pins.
+  assert.doesNotThrow(() => assertRequireSource("manual-screenshots", normalized, engineInput, "manual-screenshots"));
+  assert.throws(
+    () => assertRequireSource("muse-managed-browser", normalized, engineInput, "manual-screenshots"),
+    (e: unknown) => (e as { code?: string }).code === "SOURCE_MISMATCH",
+  );
+});

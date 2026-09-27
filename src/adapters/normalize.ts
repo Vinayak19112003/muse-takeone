@@ -81,6 +81,10 @@ export function traceToReconstructionInput(trace: TraceReelTrace): Reconstructio
   if (trace.redactions) input.redactions = trace.redactions;
   if (trace.motion) input.motion = trace.motion;
   if (trace.shots) input.shots = trace.shots;
+  // Screenshots live relative to the trace file; the engine resolves this
+  // against the trace's base directory. Dropping it breaks every trace that
+  // keeps frames in a subdirectory.
+  if (trace.screenshotsDir) input.screenshotsDir = trace.screenshotsDir;
   return input;
 }
 
@@ -98,22 +102,27 @@ export function withCapabilities(
 }
 
 /**
- * Enforce --require-source against a normalized trace.
+ * Enforce --require-source against a trace.
  *
- * The legacy value "muse-managed-browser" keeps working: it matches any trace
- * the Muse adapter normalized (agent-browser / agent "muse"). This preserves
- * existing Muse workflows through the v0.x deprecation period.
+ * --require-source pins the provenance the input file DECLARED. It matches
+ * when the required value equals the raw declared source.type, or the
+ * normalized (type, agent) pair. The legacy value "muse-managed-browser" keeps
+ * working: it matches any trace the Muse adapter normalized
+ * (agent-browser / agent "muse"). This preserves existing Muse workflows
+ * through the v0.x deprecation period.
  */
 export function assertRequireSource(
   required: string | undefined,
   trace: TraceReelTrace,
   engineInput: ReconstructionInput,
+  rawSourceType?: string,
 ): void {
   if (!required) return;
   const actual = engineInput.source?.type;
   const agent = trace.source?.agent;
   const ok =
     actual === required ||
+    rawSourceType === required ||
     (required === "muse-managed-browser" && actual === "agent-browser" && agent === "muse");
   if (!ok) {
     throw new TraceReelError(
