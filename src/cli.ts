@@ -742,7 +742,7 @@ program
     try {
       const { mkdtempSync, rmSync } = await import("node:fs");
       const { tmpdir } = await import("node:os");
-      const d = mkdtempSync(join(tmpdir(), "muse-takeone-"));
+      const d = mkdtempSync(join(tmpdir(), "tracereel-"));
       rmSync(d, { recursive: true });
       lines.push({ ok: true, label: "write", detail: "temp dir writable" });
     } catch (e) {

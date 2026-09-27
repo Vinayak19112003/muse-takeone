@@ -5,7 +5,7 @@ password field and type with the key pill hidden, click Sign in, land on the
 welcome screen.
 
 ```bash
-muse-takeone reconstruct examples/form-typing/input.json -o form-demo.mp4
+tracereel reconstruct examples/form-typing/input.json -o form-demo.mp4
 ```
 
 ## What the input does
@@ -38,7 +38,7 @@ so the viewer absorbs it.
 
 ## Why one camera shot
 
-Run `muse-takeone inspect` on this input: the shot planner reports a single
+Run `tracereel inspect` on this input: the shot planner reports a single
 shot. All four interaction points fall inside one routine-scale (1.35×) framing,
 so the camera moves once, settles before the first click, and holds through the
 whole flow. A password field 80 px below the username field does not deserve a

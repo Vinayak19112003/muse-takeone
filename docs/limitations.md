@@ -1,6 +1,6 @@
 # Limitations
 
-Honest boundaries of what muse-takeone v0.1.0 can and cannot do.
+Honest boundaries of what tracereel v0.1.0 can and cannot do.
 
 ## Reconstruction is not a recording
 
@@ -64,7 +64,7 @@ the tool — mux them in with ffmpeg afterwards.
 ## Performance
 
 Render cost scales with output pixels × fps × duration and worker count. The
-compositor needs headless Chromium and ffmpeg on the machine (`muse-takeone
+compositor needs headless Chromium and ffmpeg on the machine (`tracereel
 doctor` checks). Very long inputs (10+ minutes) are untested — prefer several
 short takes.
 

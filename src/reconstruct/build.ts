@@ -1,7 +1,7 @@
 /**
  * Build a reconstructed recording manifest from real screenshots plus an action script.
  *
- * This is the programmatic core of `muse-takeone reconstruct`. Muse (or anyone) captures
+ * This is the programmatic core of `tracereel reconstruct`. Muse (or anyone) captures
  * real screenshots in the source browser (normally Muse's own managed browser session),
  * notes where it clicked/typed/scrolled in each one, and this module synthesizes the
  * cursor and click event stream the compositor needs: 60Hz eased cursor glides along
@@ -161,7 +161,7 @@ export interface ReconstructionMotion {
   maxMs?: number;
 }
 
-/** The `muse-takeone reconstruct` input file. */
+/** The `tracereel reconstruct` input file. */
 export interface ReconstructionInput {
   /** Schema version. Currently 1; validation rejects anything else. */
   version?: number;
@@ -184,7 +184,7 @@ export interface ReconstructionInput {
   motion?: ReconstructionMotion;
   /**
    * Explicit camera shots, overriding the automatic shot planner entirely.
-   * Times are in source ms — the synthetic timeline `muse-takeone inspect` prints
+   * Times are in source ms — the synthetic timeline `tracereel inspect` prints
    * (each frame's `@Ns` timestamp). Run inspect first, then author shots around
    * the frames you want reframed. Each shot: `{ start, end, cx, cy, scale }`
    * (centre in viewport CSS px, scale like 1.35), optional `transitionDuration`
@@ -449,8 +449,8 @@ function checkSource(input: ReconstructionInput, requireSource?: ReconstructionS
 /**
  * Write a reconstruction working directory: copies the screenshots into frames/
  * (applying redactions), writes manifest.json with the reconstruction defaults,
- * and returns the manifest. `muse-takeone render <workDir>` on the result is
- * byte-identical to `muse-takeone reconstruct`.
+ * and returns the manifest. `tracereel render <workDir>` on the result is
+ * byte-identical to `tracereel reconstruct`.
  */
 export function writeReconstructionDir(opts: BuildReconstructionOptions): { workDir: string; manifest: RecordingManifest } {
   const log = opts.log ?? (() => {});

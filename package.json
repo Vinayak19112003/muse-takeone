@@ -36,7 +36,8 @@
     "LICENSE",
     "CHANGELOG.md",
     "schema",
-    "skills/muse-takeone/SKILL.md",
+    "skills/tracereel/SKILL.md",
+    "skills/adapters/muse/SKILL.md",
     "docs",
     "examples"
   ],

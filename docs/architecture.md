@@ -1,9 +1,15 @@
 # Architecture
 
-How muse-takeone turns a JSON action script and a folder of screenshots into a
+How TraceReel turns an AI-agent browser trace and a folder of screenshots into a
 1080p60 MP4. The native takeone path (drive a live browser, record the event log)
-shares the compositor; everything under `src/reconstruct/` is the muse-takeone
-addition.
+shares the compositor; everything under `src/reconstruct/` plus the adapter
+layer (`src/adapters/`, `src/trace/`, `src/bundle.ts`, `src/capabilities.ts`,
+`src/sdk.ts`) is the TraceReel addition.
+
+> Agent neutrality: adapters normalize each agent's trace into Trace Format v1
+> (`docs/TRACE_FORMAT.md`) before anything below runs. The renderer never sees
+> agent identity — adding an agent means writing an adapter, not touching the
+> pipeline described here.
 
 ## Pipeline
 
@@ -29,7 +35,7 @@ renderRecording                       src/compositor/render.ts
 contact sheet + QA report             src/reconstruct/qa.ts
 ```
 
-`muse-takeone reconstruct` runs the whole chain. `muse-takeone render <workDir>`
+`tracereel reconstruct` runs the whole chain. `tracereel render <workDir>`
 re-runs only the render stage (restyle a take without rebuilding the manifest).
 
 ## The manifest

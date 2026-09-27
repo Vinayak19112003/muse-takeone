@@ -1,4 +1,4 @@
-# Contributing to muse-takeone
+ # Contributing to TraceReel
 
 Thanks for looking. muse-takeone is a focused fork: the Muse reconstruction
 workflow is the product; the upstream takeone scenario engine underneath is

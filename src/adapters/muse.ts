@@ -3,7 +3,7 @@
  *
  * Accepts:
  *  - TraceReel Trace v1 with source.agent "muse" (states/actions or frames)
- *  - the legacy muse-takeone frame input, including
+ *  - the legacy v0.1.x frame input, including
  *    source.type "muse-managed-browser" (migrated with a deprecation warning)
  *  - legacy frame input with no source at all (assumed Muse, warned)
  */
