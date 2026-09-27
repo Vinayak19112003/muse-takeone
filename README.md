@@ -25,8 +25,8 @@ The renderer never sees agent identity. Adapters normalize each agent's trace fo
 TraceReel installs from this repository (it is not published to npm):
 
 ```bash
-git clone https://github.com/Vinayak19112003/muse-takeone.git
-cd muse-takeone
+git clone https://github.com/Vinayak19112003/tracereel.git
+cd tracereel
 npm ci
 npm run build
 ```

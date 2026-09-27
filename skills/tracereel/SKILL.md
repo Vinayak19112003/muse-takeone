@@ -22,8 +22,8 @@ Do this once per machine, before the first reconstruction. Each step is safe to 
 **Install from the repository** (TraceReel is not on npm; never `npm i -D takeone` for this workflow — that installs the upstream package without the reconstruction features):
 
 ```bash
-git clone https://github.com/Vinayak19112003/muse-takeone.git
-cd muse-takeone
+git clone https://github.com/Vinayak19112003/tracereel.git
+cd tracereel
 npm ci
 npm run build
 ```
