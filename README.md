@@ -45,8 +45,6 @@ generate → validate --json → repair → inspect --json → repair → render
 tracereel validate trace.json --json   # machine-readable schema + semantics check
 tracereel inspect trace.json --json    # what will happen: agent, states, shots, timing, QA
 tracereel reconstruct trace.json -o demo.mp4
-# optional narration + music (agent supplies the audio files; TraceReel mixes):
-tracereel audio demo.mp4 --trace trace.json -o demo-narrated.mp4 --subtitles both
 ```
 
 A trace is states and actions, not frames and hacks:
@@ -112,7 +110,6 @@ tracereel reconstruct demo.tracereel/trace.json -o demo.mp4
 | `tracereel import <agent-trace> --adapter <name> -o demo.tracereel` | normalize an agent's raw trace into a portable bundle |
 | `tracereel doctor [--json]` | machine readiness: node, ffmpeg, Chromium renderer, disk, write perms |
 | `tracereel reconstruct trace.json -o demo.mp4` | validate → manifest → 1080p60 MP4 + contact sheet + QA report |
-| `tracereel audio silent.mp4 --trace trace.json -o final.mp4` | mix agent-supplied narration/music onto the video; video stream copied (`-c:v copy`) |
 | `tracereel render <dir>` | re-render a kept work dir (`--keep-work-dir`) with different styling |
 | `tracereel assemble ./frames` | Ken Burns-style video from stills, no cursor (upstream feature) |
 | `tracereel setup` | download Chromium once, check ffmpeg (upstream feature) |
@@ -125,7 +122,7 @@ The original takeone workflow (rehearse live → export scenario → record) is 
 
 The render is deterministic: the same trace always produces the same video. Crossfades are measured in output time and every frame names its own images, so parallel workers can't disagree. (The intermediate manifest stamps a wall-clock `createdAt` for provenance; it is metadata only and never affects a pixel.)
 
-How it works in detail: [`docs/architecture.md`](docs/architecture.md). The trace format: [`docs/TRACE_FORMAT.md`](docs/TRACE_FORMAT.md). Agent audio (narration + music): [`docs/AUDIO.md`](docs/AUDIO.md). Privacy and security notes: [`docs/privacy.md`](docs/privacy.md). Known limitations: [`docs/limitations.md`](docs/limitations.md).
+How it works in detail: [`docs/architecture.md`](docs/architecture.md). The trace format: [`docs/TRACE_FORMAT.md`](docs/TRACE_FORMAT.md). Privacy and security notes: [`docs/privacy.md`](docs/privacy.md). Known limitations: [`docs/limitations.md`](docs/limitations.md).
 
 ## Development
 
