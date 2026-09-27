@@ -87,9 +87,14 @@ export {
   isBundleDir,
   traceScreenshotFiles,
   traceSegmentFiles,
+  traceNarrationFiles,
+  traceMusicFiles,
   BUNDLE_SUFFIX,
   SEGMENTS_DIR,
   FRAMES_DIR,
+  AUDIO_DIR,
+  NARRATION_DIR,
+  MUSIC_DIR,
   type BundleMetadata,
   type LoadedBundle,
 } from "./bundle.js";
@@ -98,9 +103,12 @@ export { TraceBuilder } from "./sdk.js";
 export type {
   TraceBuilderOptions,
   StateOptions,
+  NarrationOptions,
+  MusicOptions,
   ClickOptions as TraceClickOptions,
   TypeOptions as TraceTypeOptions,
   ScrollOptions as TraceScrollOptions,
   HoverOptions as TraceHoverOptions,
   WaitOptions as TraceWaitOptions,
 } from "./sdk.js";
+export * from "./audio/index.js";
