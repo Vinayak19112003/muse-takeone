@@ -123,6 +123,40 @@ tracereel reconstruct trace.json --require-source muse-managed-browser -o demo.m
 | `tracereel import raw.json --adapter <name> -o demo.tracereel` | normalize an agent's raw trace into a portable bundle (trace + frames + metadata). |
 | `tracereel doctor [--json]` | machine readiness: node, ffmpeg, Chromium renderer, disk, write perms. |
 | `tracereel reconstruct trace.json -o demo.mp4` | validate → build manifest → render 1080p60 MP4 + contact sheet + QA report. `--keep-work-dir` + `tracereel render <work-dir>` restyles a take without rebuilding. `--width/--height/--fps` for previews. |
+| `tracereel audio silent.mp4 --trace trace.json -o final.mp4 [--subtitles srt\|vtt\|both]` | mix agent-supplied narration/music onto the finished video: scene-timed placement, ducking, fades, AAC output. The video stream is copied (`-c:v copy`), never re-encoded. |
+
+`reconstruct` prints a QA line after every render (duration, resolution, clicks, typed chars, transitions, captions, event count) plus warning counts by bucket — camera, timing, missing-state, viewport — with concrete repair hints. No global quality score: the counts are the signal.
+
+## Narration + music (agent-native audio)
+
+TraceReel never generates voice or music — there is no built-in TTS. The
+agent brings finished audio; TraceReel handles timing, placement, mixing,
+ducking, fades, clipping protection, AAC output, and the `-c:v copy` mux.
+Full reference: `docs/AUDIO.md`.
+
+The end-to-end agent workflow:
+
+1. Perform the browser task; capture states/actions.
+2. Write the trace; decide which scenes need narration.
+3. Write concise, natural narration per scene.
+4. If you have a TTS/voice tool, generate one voice clip per narrated scene
+   (MP3/WAV/M4A) and save them under `audio/narration/`.
+5. Associate clips with state ids: `narration: [{ state, text, audio, generatedBy? }]`.
+   `generatedBy` is optional provenance — never invent provider/voice/tool details.
+6. Optionally supply music: `audio.music = { file, volume, loop, fadeInMs, fadeOutMs, duckUnderNarration }`.
+7. `tracereel validate trace.json` → fix every error.
+8. `tracereel inspect trace.json` → check the audio section.
+9. `tracereel reconstruct trace.json -o silent.mp4` → render visuals.
+10. `tracereel audio silent.mp4 --trace trace.json -o final.mp4 [--subtitles both]` → mix + mux.
+11. Read the QA output; repair issues; ship `final.mp4`.
+
+Rules: clips are placed by **state** on the output timeline — never compute
+timestamps yourself (`startMs` is an advanced override only). Video timing is
+fixed; over-long narration warns (`NARRATION_EXCEEDS_SCENE`) instead of
+stretching scenes. Describe the result as **"reconstructed from real
+screenshots with a rebuilt cursor path"** — never a live recording. All audio
+stays local; nothing is uploaded. Browser/system sound is not captured and
+must never be synthesized or faked.
 
 `reconstruct` prints a QA line after every render (duration, resolution, clicks, typed chars, transitions, captions, event count) plus warning counts by bucket — camera, timing, missing-state, viewport — with concrete repair hints. No global quality score: the counts are the signal.
 
