@@ -228,7 +228,7 @@ export async function assembleVideo(opts: AssembleOptions): Promise<AssembleResu
   });
 
   const filter = `${chains.join(";")};${labels.join("")}concat=n=${labels.length}:v=1:a=0[vout]`;
-  if (process.env.TAKEONE_ASSEMBLE_DEBUG) log(`FILTER: ${filter}`);
+  if (process.env.TRACEREEL_ASSEMBLE_DEBUG ?? process.env.TAKEONE_ASSEMBLE_DEBUG) log(`FILTER: ${filter}`);
   const outFile = resolve(opts.outFile ?? join(dir, "assemble-output.mp4"));
   const args = ["-hide_banner", "-loglevel", "error", "-y", ...inputs, "-filter_complex", filter, "-map", "[vout]", "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", outFile];
 

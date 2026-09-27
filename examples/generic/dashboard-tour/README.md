@@ -5,7 +5,7 @@ targets are far apart, so the camera reframes; the last two are close, so they
 share a shot.
 
 ```bash
-muse-takeone reconstruct examples/dashboard-nav/input.json -o nav-demo.mp4
+tracereel reconstruct examples/dashboard-nav/input.json -o nav-demo.mp4
 ```
 
 ## What the input does
@@ -24,7 +24,7 @@ viewer to read it.
 
 ## Camera behavior to watch
 
-`muse-takeone inspect` shows two shots: sidebar, then content. Compare with
+`tracereel inspect` shows two shots: sidebar, then content. Compare with
 form-typing (one shot): the planner groups foci by time *and* by whether one
 routine-scale framing covers them. Clicks seconds apart across the viewport
 reframe; clicks seconds apart inside one framing don't. After the last focus

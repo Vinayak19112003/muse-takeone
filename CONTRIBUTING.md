@@ -1,8 +1,8 @@
-# Contributing to muse-takeone
+# Contributing to TraceReel
 
-Thanks for looking. muse-takeone is a focused fork: the Muse reconstruction
-workflow is the product; the upstream takeone scenario engine underneath is
-maintained conservatively.
+Thanks for looking. TraceReel is a focused fork of TakeOne: the agent-trace
+reconstruction workflow is the product; the upstream takeone scenario engine
+underneath is maintained conservatively.
 
 ## Ground rules
 
@@ -48,6 +48,6 @@ Logical commits with a scope prefix, e.g. `reconstruct: …`, `compositor: …`,
 ## Reporting issues
 
 Include: the input JSON (with fake credentials / redacted frames if
-sensitive), `muse-takeone inspect` output, the QA warnings from the render,
+sensitive), `tracereel inspect` output, the QA warnings from the render,
 and what you expected. For rendering bugs, the contact sheet is usually
 enough to diagnose.

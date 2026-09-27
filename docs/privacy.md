@@ -1,6 +1,6 @@
 # Privacy and security
 
-muse-takeone exists to make videos of real browser sessions — often signed-in
+tracereel exists to make videos of real browser sessions — often signed-in
 ones. Treat every input as sensitive until proven otherwise.
 
 ## What the tool sees
@@ -65,5 +65,5 @@ workflow.
 
 ## Reporting
 
-If you find a privacy or security issue in muse-takeone, open a GitHub issue
+If you find a privacy or security issue in tracereel, open a GitHub issue
 and mark it clearly; avoid posting screenshots containing real personal data.

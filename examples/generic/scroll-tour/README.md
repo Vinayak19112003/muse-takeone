@@ -4,7 +4,7 @@ Scrolling through a long page in three captured states, with the video sliding
 down between them.
 
 ```bash
-muse-takeone reconstruct examples/scroll-tour/input.json -o scroll-demo.mp4
+tracereel reconstruct examples/scroll-tour/input.json -o scroll-demo.mp4
 ```
 
 ## What the input does

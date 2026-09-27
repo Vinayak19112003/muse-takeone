@@ -34,12 +34,15 @@ export interface SessionInfo {
 export const DEFAULT_SESSION_FILE = ".takeone/session.json";
 export const DEFAULT_SESSION_PORT = 9222;
 
-/** The session's debugging port. TAKEONE_SESSION_PORT gives a second agent on the same machine its own browser. */
-export const sessionPort = () => Number(process.env.TAKEONE_SESSION_PORT || DEFAULT_SESSION_PORT);
+/** The session's debugging port. TRACEREEL_SESSION_PORT (deprecated: TAKEONE_SESSION_PORT) gives a second agent on the same machine its own browser. */
+export const sessionPort = () =>
+  Number(process.env.TRACEREEL_SESSION_PORT ?? process.env.TAKEONE_SESSION_PORT ?? DEFAULT_SESSION_PORT);
 const profileFor = (port: number) => (port === DEFAULT_SESSION_PORT ? "/tmp/takeone-session" : `/tmp/takeone-session-${port}`);
 
 export function sessionFile(path?: string): string {
-  return resolve(path ?? process.env.TAKEONE_SESSION_FILE ?? DEFAULT_SESSION_FILE);
+  return resolve(
+    path ?? process.env.TRACEREEL_SESSION_FILE ?? process.env.TAKEONE_SESSION_FILE ?? DEFAULT_SESSION_FILE,
+  );
 }
 
 export function readSession(path?: string): SessionInfo | null {
@@ -101,7 +104,7 @@ export function startSessionDaemon(opts: {
   const child = spawn(process.execPath, args, {
     detached: true,
     stdio: "ignore",
-    env: { ...process.env, TAKEONE_SESSION_DAEMON: "1" },
+    env: { ...process.env, TRACEREEL_SESSION_DAEMON: "1", TAKEONE_SESSION_DAEMON: "1" },
   });
   child.unref();
   return { pid: child.pid ?? -1 };

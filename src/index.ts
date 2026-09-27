@@ -46,3 +46,61 @@ export {
   type ReconstructionType,
   type BuildReconstructionOptions,
 } from "./reconstruct/build.js";
+// TraceReel Trace v1: the versioned, agent-neutral capture protocol.
+export {
+  TRACE_FORMAT_VERSION,
+  type TraceReelTrace,
+  type TraceSource,
+  type TraceViewport,
+  type AgentCapabilities,
+  type AgentState,
+  type AgentAction,
+  type StateTransition,
+  type TraceVideoSegment,
+  type TraceTimeline,
+  type RedactionRegion as TraceRedactionRegion,
+} from "./trace/types.js";
+// Adapters: one per agent. The renderer never sees agent identity.
+export {
+  MuseAdapter,
+  GrokbotAdapter,
+  GenericAdapter,
+  getAdapter,
+  listAdapters,
+  pickAdapter,
+  normalizeTrace,
+  TraceReelError,
+  type TraceReelAdapter,
+  type NormalizedTrace,
+} from "./adapters/index.js";
+export { traceToReconstructionInput, statesToFrames, assertRequireSource } from "./adapters/normalize.js";
+export {
+  MUSE_CAPABILITIES,
+  GROKBOT_CAPABILITIES,
+  GENERIC_CAPABILITIES,
+  CAPABILITY_DESCRIPTIONS,
+} from "./capabilities.js";
+// Portable capture bundles: <name>.tracereel/
+export {
+  writeBundle,
+  loadBundle,
+  isBundleDir,
+  traceScreenshotFiles,
+  traceSegmentFiles,
+  BUNDLE_SUFFIX,
+  SEGMENTS_DIR,
+  FRAMES_DIR,
+  type BundleMetadata,
+  type LoadedBundle,
+} from "./bundle.js";
+// Small TypeScript SDK: import { TraceBuilder } from "tracereel";
+export { TraceBuilder } from "./sdk.js";
+export type {
+  TraceBuilderOptions,
+  StateOptions,
+  ClickOptions as TraceClickOptions,
+  TypeOptions as TraceTypeOptions,
+  ScrollOptions as TraceScrollOptions,
+  HoverOptions as TraceHoverOptions,
+  WaitOptions as TraceWaitOptions,
+} from "./sdk.js";

@@ -10,12 +10,14 @@ import { exploreScenario } from "./runner/explore.js";
 import { renderRecording } from "./compositor/render.js";
 import { assembleVideo } from "./assemble.js";
 import { writeReconstructionDir, type ReconstructionInput } from "./reconstruct/build.js";
+import type { TraceReelTrace } from "./trace/types.js";
 import { chromiumInfo, launchBrowser, connectToSession } from "./browser.js";
 import {
   DEFAULT_SESSION_PORT,
   clearSession,
   readSession,
   sessionAlive,
+  sessionPort,
   startSessionDaemon,
   waitForSession,
   ensureSession,
@@ -55,11 +57,68 @@ function defaultOutDir(scenarioFile: string, name?: string) {
   return join("recordings", `${name ?? basename(scenarioFile).replace(/\.[^.]+$/, "")}-${stamp}`);
 }
 
+/**
+ * Enforce --require-source against the normalized trace.
+ *
+ * The legacy value "muse-managed-browser" keeps working: it matches any trace
+ * the Muse adapter normalized (agent-browser / agent "muse"). This preserves
+ * existing Muse workflows through the v0.x deprecation period.
+ */
+async function checkRequireSource(required: string | undefined, trace: TraceReelTrace, engineInput: ReconstructionInput, rawSourceType?: string) {
+  if (!required) return;
+  const { assertRequireSource } = await import("./adapters/normalize.js");
+  assertRequireSource(required, trace, engineInput, rawSourceType);
+}
+
+/**
+ * Read a trace file (TraceReel Trace v1, or legacy takeone frame input) and
+ * normalize it through the adapter pipeline into the ReconstructionInput the
+ * engine renders. Emits adapter warnings (deprecations, assumptions).
+ */
+async function loadTraceInput(inputFile: string, adapterName?: string) {
+  const { normalizeTrace } = await import("./adapters/index.js");
+  const { traceToReconstructionInput } = await import("./adapters/normalize.js");
+  const inputPath = resolve(inputFile);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(inputPath, "utf8"));
+  } catch (e) {
+    throw new Error(`invalid JSON in ${inputPath}: ${(e as Error).message}`);
+  }
+  // Capture before normalizeTrace: adapters may mutate the raw object in place.
+  const rawSourceType = (raw as { source?: { type?: unknown } } | null)?.source?.type as string | undefined;
+  const { trace, warnings, adapter } = normalizeTrace(raw, adapterName ? { adapter: adapterName } : undefined);
+  for (const w of warnings) log(`warning: ${w}`);
+  return {
+    inputPath,
+    baseDir: dirname(inputPath),
+    trace,
+    adapter,
+    engineInput: traceToReconstructionInput(trace),
+    // The source type the file actually declared, before adapter normalization.
+    // --require-source pins declared provenance, so it must see this too.
+    rawSourceType,
+  };
+}
+
 const program = new Command();
-// The primary CLI name is `muse-takeone`; `takeone` remains as a backwards-compatible
-// alias (both bins point at this file). Show whichever name the user invoked.
+// Primary CLI is `tracereel`. `takeone` and `muse-takeone` remain as deprecated
+// compatibility aliases (all bins point at this file). Show whichever name the
+// user invoked, and nudge alias users toward the new name.
 const invokedAs = basename(process.argv[1] ?? "").replace(/\.js$/, "");
-program.name(invokedAs === "takeone" ? "takeone" : "muse-takeone").description(pkg.description).version(pkg.version);
+// Unknown invocation basenames (e.g. `node dist/cli.js` -> "cli") fall back to
+// the primary name instead of leaking an internal file name into help text.
+const cliName =
+  invokedAs === "tracereel" || invokedAs === "takeone" || invokedAs === "muse-takeone"
+    ? invokedAs
+    : "tracereel";
+program.name(cliName).description(pkg.description).version(pkg.version);
+if (invokedAs === "takeone" || invokedAs === "muse-takeone") {
+  log(
+    `warning: the \`${invokedAs}\` command is deprecated and will be removed in a future release. ` +
+      `Use \`tracereel\` instead.`,
+  );
+}
 
 const sharedOpts = (cmd: Command) =>
   cmd
@@ -104,7 +163,7 @@ sessionCmd
   .description("Launch the session browser and log in once (spawns a detached daemon)")
   .option("--scenario <file>", "reuse this scenario's config and explore.setup for login")
   .option("--url <url>", "page to open after setup")
-  .option("--port <n>", "CDP debug port (or TAKEONE_SESSION_PORT)", String(process.env.TAKEONE_SESSION_PORT || DEFAULT_SESSION_PORT))
+  .option("--port <n>", "CDP debug port (or TRACEREEL_SESSION_PORT)", String(sessionPort()))
   .option("--profile <dir>", "persistent Chromium user data dir", "/tmp/takeone-session")
   .option("--headed", "show the browser window")
   .action(async (o) => {
@@ -393,31 +452,33 @@ sharedOpts(
 sharedOpts(
   program
     .command("reconstruct")
-    .description("Build a polished video from real screenshots plus an action script (Muse-managed-browser workflow)")
-    .argument("<input>", "reconstruction input JSON: viewport, screenshotsDir, frames with clicks/types/captions")
+    .description("Build a polished video from an agent's trace: screenshots + actions in, demo video out")
+    .argument("<input>", "trace JSON: TraceReel Trace v1 (states/actions or frames), or a legacy takeone frame input")
     .option("-o, --out <file>", "output video file (default <input-dir>/reconstruct-output.mp4)")
     .option("--work-dir <dir>", "working directory for manifest + copied frames (default <input-dir>/.reconstruct)")
     .option("--keep-work-dir", "do not delete the working directory after rendering")
     .option("--no-contact-sheet", "skip the keyframe sheet")
-    .option("--require-source <type>", "fail unless input.source.type matches (muse-managed-browser | external-browser | manual-screenshots)"),
+    .option("--adapter <name>", "force an adapter: muse | grokbot | generic (default: picked from the trace source)")
+    .option("--require-source <type>", "fail unless the normalized trace's source.type matches (agent-browser | muse-managed-browser | external-browser | manual-screenshots)"),
 ).action(async (inputFile: string, o) => {
   const { rmSync } = await import("node:fs");
-  const inputPath = resolve(inputFile);
-  const input = JSON.parse(readFileSync(inputPath, "utf8")) as ReconstructionInput;
-  const baseDir = dirname(inputPath);
-  const workDir = resolve(o.workDir ?? join(baseDir, ".reconstruct"));
+  let workDir = "";
   try {
+    const loaded = await loadTraceInput(inputFile, o.adapter);
+    const { inputPath, baseDir, engineInput } = loaded;
+    workDir = resolve(o.workDir ?? join(baseDir, ".reconstruct"));
     const { validateReconstructionInput } = await import("./reconstruct/validate.js");
     const { qaReconstruction, formatQaMetrics } = await import("./reconstruct/qa.js");
-    const v = validateReconstructionInput(input, baseDir);
-    for (const w of v.warnings) log(`warning: ${w.message}`);
+    const v = validateReconstructionInput(engineInput, baseDir);
+    for (const w of v.warnings) log(`warning: ${w.code}: ${w.message}`);
     if (!v.ok) {
-      for (const e of v.errors) log(`error: ${e.message}`);
+      for (const e of v.errors) log(`error: ${e.code}: ${e.message}${e.suggestion ? ` (${e.suggestion})` : ""}`);
       log(`reconstruct failed: input invalid (${v.errors.length} error${v.errors.length === 1 ? "" : "s"})`);
       process.exitCode = 1;
       return;
     }
-    const { manifest } = writeReconstructionDir({ input, baseDir, workDir, config: parseOverrides(o), requireSource: o.requireSource, log });
+    checkRequireSource(o.requireSource, loaded.trace, engineInput, loaded.rawSourceType);
+    const { manifest } = writeReconstructionDir({ input: engineInput, baseDir, workDir, config: parseOverrides(o), log });
     const outFile = resolve(o.out ?? join(baseDir, "reconstruct-output.mp4"));
     if (outFile === inputPath) {
       log("error: refusing to write the video over the input file itself");
@@ -430,70 +491,99 @@ sharedOpts(
       return;
     }
     const res = await renderRecording({ recordingDir: workDir, outFile, config: parseOverrides(o), contactSheet: o.contactSheet, log, onProgress: progress });
-    const qa = qaReconstruction(input, manifest);
+    const { formatWarningCounts } = await import("./reconstruct/qa.js");
+    const qa = qaReconstruction(engineInput, manifest);
     log(`QA: ${formatQaMetrics(qa.metrics)}`);
-    for (const w of qa.warnings) log(`QA warning: ${w}`);
+    log(`QA warnings: ${formatWarningCounts(qa.warningCounts)}`);
+    for (const w of qa.categorized) log(`QA warning [${w.category}]: ${w.message}`);
     console.log(JSON.stringify({ video: res.outFile, keyframes: res.contactSheet, durationMs: res.durationMs, frames: manifest.frames.length, qa: qa.metrics, qaWarnings: qa.warnings }, null, 2));
   } catch (e) {
     log(`reconstruct failed: ${(e as Error).message}`);
     process.exitCode = 1;
   } finally {
-    if (!o.keepWorkDir) rmSync(workDir, { recursive: true, force: true });
+    if (workDir && !o.keepWorkDir) rmSync(workDir, { recursive: true, force: true });
   }
 });
 
 program
   .command("validate")
-  .description("Validate a reconstruction input file without rendering anything")
-  .argument("<input>", "reconstruction input JSON")
-  .action(async (inputFile: string) => {
+  .description("Validate a trace without rendering anything: adapter normalization, then structural checks with error codes")
+  .argument("<input>", "trace JSON: TraceReel Trace v1 (states/actions or frames), or a legacy takeone frame input")
+  .option("--adapter <name>", "force an adapter: muse | grokbot | generic (default: picked from the trace source)")
+  .option("--json", "machine-readable output with error codes, paths, and suggestions")
+  .action(async (inputFile: string, o: { adapter?: string; json?: boolean }) => {
     const { validateReconstructionInput } = await import("./reconstruct/validate.js");
-    const inputPath = resolve(inputFile);
-    let raw: unknown;
+    let loaded;
     try {
-      raw = JSON.parse(readFileSync(inputPath, "utf8"));
+      loaded = await loadTraceInput(inputFile, o.adapter);
     } catch (e) {
-      console.error(`invalid JSON: ${(e as Error).message}`);
+      if (o.json) {
+        console.log(JSON.stringify({ ok: false, errors: [{ code: "UNREADABLE_INPUT", message: (e as Error).message }], warnings: [] }, null, 2));
+      } else {
+        console.error(`invalid: ${(e as Error).message}`);
+      }
       process.exitCode = 1;
       return;
     }
-    const { errors, warnings, ok } = validateReconstructionInput(raw, dirname(inputPath));
-    for (const w of warnings) console.error(`warning: ${w.message}`);
-    for (const e of errors) console.error(`error: ${e.message}`);
-    if (ok) console.log(`valid: ${inputPath} (${warnings.length} warning${warnings.length === 1 ? "" : "s"})`);
-    else console.error(`invalid: ${errors.length} error${errors.length === 1 ? "" : "s"}`);
+    const { inputPath, baseDir, engineInput, adapter } = loaded;
+    const { errors, warnings, ok } = validateReconstructionInput(engineInput, baseDir);
+    if (o.json) {
+      console.log(JSON.stringify({
+        ok,
+        input: inputPath,
+        adapter: adapter.name,
+        agent: loaded.trace.source?.agent ?? null,
+        errors: errors.map((e) => ({ code: e.code, path: e.path ?? null, message: e.message, suggestion: e.suggestion ?? null })),
+        warnings: warnings.map((w) => ({ code: w.code, path: w.path ?? null, message: w.message, suggestion: w.suggestion ?? null })),
+      }, null, 2));
+    } else {
+      for (const w of warnings) console.error(`warning: ${w.code}: ${w.message}`);
+      for (const e of errors) console.error(`error: ${e.code}: ${e.message}${e.suggestion ? ` (${e.suggestion})` : ""}`);
+      if (ok) console.log(`valid: ${inputPath} (adapter: ${adapter.name}, ${warnings.length} warning${warnings.length === 1 ? "" : "s"})`);
+      else console.error(`invalid: ${errors.length} error${errors.length === 1 ? "" : "s"}`);
+    }
     process.exitCode = ok ? 0 : 1;
   });
 
 program
   .command("inspect")
-  .description("Report what a reconstruction input will produce: source, frames, actions, duration, camera shots, warnings")
-  .argument("<input>", "reconstruction input JSON")
+  .description("Report what a trace will produce: agent, states/frames, actions, duration, camera shots, warnings")
+  .argument("<input>", "trace JSON: TraceReel Trace v1 (states/actions or frames), or a legacy takeone frame input")
+  .option("--adapter <name>", "force an adapter: muse | grokbot | generic (default: picked from the trace source)")
   .option("--json", "machine-readable output")
   .option("-c, --config <json>", "JSON config overrides")
-  .action(async (inputFile: string, o: { json?: boolean; config?: string }) => {
+  .action(async (inputFile: string, o: { json?: boolean; config?: string; adapter?: string }) => {
     const { validateReconstructionInput } = await import("./reconstruct/validate.js");
     const { buildReconstructionManifest } = await import("./reconstruct/build.js");
     const { qaReconstruction, formatQaMetrics } = await import("./reconstruct/qa.js");
     const { planReconstructionCamera } = await import("./reconstruct/shots.js");
     const { RECONSTRUCTION_DEFAULTS, resolveConfig } = await import("./config.js");
-    const inputPath = resolve(inputFile);
-    const raw = JSON.parse(readFileSync(inputPath, "utf8"));
-    const v = validateReconstructionInput(raw, dirname(inputPath));
+    let loaded;
+    try {
+      loaded = await loadTraceInput(inputFile, o.adapter);
+    } catch (e) {
+      console.error(`inspect aborted: ${(e as Error).message}`);
+      process.exitCode = 1;
+      return;
+    }
+    const { inputPath, baseDir, trace, engineInput, adapter } = loaded;
+    const v = validateReconstructionInput(engineInput, baseDir);
     if (!v.ok) {
-      for (const e of v.errors) console.error(`error: ${e.message}`);
-      console.error("inspect aborted: fix the errors above (or run `muse-takeone validate` for the full list)");
+      for (const e of v.errors) console.error(`error: ${e.code}: ${e.message}`);
+      console.error(`inspect aborted: fix the errors above (or run \`tracereel validate --json\` for codes and suggestions)`);
       process.exitCode = 1;
       return;
     }
     const cfg = resolveConfig(RECONSTRUCTION_DEFAULTS, o.config ? JSON.parse(o.config) : undefined);
-    const manifest = buildReconstructionManifest(raw, cfg);
-    const qa = qaReconstruction(raw, manifest);
+    const manifest = buildReconstructionManifest(engineInput, cfg);
+    const qa = qaReconstruction(engineInput, manifest);
     const { shots } = planReconstructionCamera(manifest, cfg);
-    const src = raw.source;
-    const frameRows = raw.frames.map((f: { file: string; actions?: unknown[]; caption?: string }, i: number) => ({
+    const src = trace.source;
+    const frames = engineInput.frames;
+    const frameRows = frames.map((f, i: number) => ({
       n: i + 1,
       file: f.file,
+      stateId: trace.states?.[i]?.id ?? null,
       atMs: manifest.frames[i].t,
       actions: (f.actions ?? []).length,
       caption: f.caption ?? null,
@@ -501,8 +591,11 @@ program
     }));
     const report = {
       input: inputPath,
+      agent: src?.agent ?? null,
+      adapter: adapter.name,
       source: src ?? null,
-      viewport: raw.viewport,
+      viewport: trace.viewport,
+      traceForm: trace.states ? "states" : "frames",
       frames: frameRows,
       qa: qa.metrics,
       cameraShots: shots.map((s, i) => ({
@@ -514,18 +607,18 @@ program
         scale: Number(s.scale.toFixed(2)),
       })),
       output: { width: cfg.output.width, height: cfg.output.height, fps: cfg.output.fps, format: cfg.output.format },
-      warnings: [...v.warnings.map((w) => w.message), ...qa.warnings],
+      warnings: [...v.warnings.map((w) => `${w.code}: ${w.message}`), ...qa.warnings],
     };
     if (o.json) {
       console.log(JSON.stringify(report, null, 2));
       return;
     }
     console.log(`input: ${inputPath}`);
-    console.log(`source: ${src ? `${src.type}${src.session ? ` (session ${src.session})` : ""}${src.captureTool ? ` via ${src.captureTool}` : ""}` : "unspecified"}`);
-    console.log(`viewport: ${raw.viewport.width}x${raw.viewport.height}`);
+    console.log(`agent: ${src?.agent ?? "unspecified"} (adapter: ${adapter.name}, form: ${trace.states ? "states" : "frames"})`);
+    console.log(`viewport: ${trace.viewport.width}x${trace.viewport.height}`);
     console.log(`frames:`);
     for (const r of frameRows) {
-      console.log(`  ${r.n}. ${r.file} @${(r.atMs / 1000).toFixed(1)}s — ${r.actions} action(s), in: ${typeof r.transitionIn === "string" ? r.transitionIn : r.transitionIn.kind}${r.caption ? ` — "${r.caption}"` : ""}`);
+      console.log(`  ${r.n}. ${r.file}${r.stateId ? ` [${r.stateId}]` : ""} @${(r.atMs / 1000).toFixed(1)}s — ${r.actions} action(s), in: ${typeof r.transitionIn === "string" ? r.transitionIn : r.transitionIn.kind}${r.caption ? ` — "${r.caption}"` : ""}`);
     }
     console.log(`expect: ${formatQaMetrics(qa.metrics)}`);
     console.log(`camera shots (${shots.length}):`);
@@ -538,6 +631,79 @@ program
       for (const w of report.warnings) console.log(`  - ${w}`);
     } else {
       console.log("warnings: none");
+    }
+  });
+
+program
+  .command("capabilities")
+  .description("Show what each agent's captures are known to provide (verified integrations vs planned)")
+  .argument("[agent]", "agent name: muse | grokbot | generic (default: all)")
+  .option("--json", "machine-readable output")
+  .action(async (agent: string | undefined, o: { json?: boolean }) => {
+    const { listAdapters, getAdapter } = await import("./adapters/index.js");
+    const { CAPABILITY_DESCRIPTIONS } = await import("./capabilities.js");
+    const adapters = agent ? [getAdapter(agent)] : listAdapters();
+    if (o.json) {
+      console.log(JSON.stringify({
+        adapters: adapters.map((a) => ({
+          name: a.name,
+          description: a.description,
+          verified: a.verified,
+          capabilities: a.capabilities,
+        })),
+      }, null, 2));
+      return;
+    }
+    for (const a of adapters) {
+      console.log(`${a.name}${a.verified ? " (verified)" : " (planned — not yet verified end to end)"}`);
+      console.log(`  ${a.description}`);
+      for (const [k, v] of Object.entries(a.capabilities)) {
+        const label = CAPABILITY_DESCRIPTIONS[k as keyof typeof CAPABILITY_DESCRIPTIONS] ?? k;
+        console.log(`  ${v ? "✓" : "✗"} ${label}`);
+      }
+    }
+  });
+
+program
+  .command("import")
+  .description("Normalize an agent's trace into a portable TraceReel bundle (demo.tracereel/)")
+  .argument("<agent-trace>", "the agent's trace JSON file (screenshots sit next to it, or under screenshotsDir)")
+  .option("-o, --out <dir>", "bundle directory (default: <trace-name>.tracereel next to the trace)")
+  .option("--adapter <name>", "force an adapter: muse | grokbot | generic (default: picked from the trace source)")
+  .option("--producer <name>", "free-form producer note recorded in metadata.json")
+  .action(async (traceFile: string, o: { out?: string; adapter?: string; producer?: string }) => {
+    const { writeBundle } = await import("./bundle.js");
+    let loaded;
+    try {
+      loaded = await loadTraceInput(traceFile, o.adapter);
+    } catch (e) {
+      log(`import failed: ${(e as Error).message}`);
+      process.exitCode = 1;
+      return;
+    }
+    const { inputPath, baseDir, trace, adapter } = loaded;
+    const { validateReconstructionInput } = await import("./reconstruct/validate.js");
+    const { traceToReconstructionInput } = await import("./adapters/normalize.js");
+    const v = validateReconstructionInput(traceToReconstructionInput(trace), baseDir);
+    if (!v.ok) {
+      for (const e of v.errors) log(`error: ${e.code}: ${e.message}${e.suggestion ? ` (${e.suggestion})` : ""}`);
+      log(`import failed: trace invalid (${v.errors.length} error${v.errors.length === 1 ? "" : "s"}) — fix with the suggestions above`);
+      process.exitCode = 1;
+      return;
+    }
+    const screenshotsDir = trace.screenshotsDir ? resolve(baseDir, trace.screenshotsDir) : baseDir;
+    const defaultOut = inputPath.replace(/\.[^.]+$/, "") + ".tracereel";
+    try {
+      const { dir, metadata } = writeBundle(resolve(o.out ?? defaultOut), trace, {
+        framesSourceDir: screenshotsDir,
+        adapter: adapter.name,
+        warnings: v.warnings.map((w) => `${w.code}: ${w.message}`),
+        producer: o.producer,
+      });
+      console.log(JSON.stringify({ bundle: dir, agent: metadata.agent, adapter: metadata.adapter, traceForm: metadata.traceForm }, null, 2));
+    } catch (e) {
+      log(`import failed: ${(e as Error).message}`);
+      process.exitCode = 1;
     }
   });
 
@@ -559,10 +725,10 @@ program
     try {
       const { resolveExecutablePath } = await import("./browser.js");
       const { existsSync: existsSync2 } = await import("node:fs");
-      const envPath = process.env.TAKEONE_CHROMIUM_PATH;
+      const envPath = process.env.TRACEREEL_CHROMIUM_PATH ?? process.env.TAKEONE_CHROMIUM_PATH;
       const p = resolveExecutablePath({ headless: true } as never);
       if (p) {
-        lines.push({ ok: true, label: "chromium (renderer)", detail: `${p}${envPath ? " (TAKEONE_CHROMIUM_PATH)" : ""}` });
+        lines.push({ ok: true, label: "chromium (renderer)", detail: `${p}${envPath ? " (TRACEREEL_CHROMIUM_PATH)" : ""}` });
       } else {
         // No pinned binary: the render falls back to Playwright-managed Chromium.
         const { chromium } = await import("playwright");
@@ -570,11 +736,11 @@ program
         if (managed && existsSync2(managed)) {
           lines.push({ ok: true, label: "chromium (renderer)", detail: `${managed} (Playwright-managed)` });
         } else {
-          lines.push({ ok: false, label: "chromium (renderer)", detail: "no pinned binary and Playwright-managed Chromium is not installed — set TAKEONE_CHROMIUM_PATH or run setup" });
+          lines.push({ ok: false, label: "chromium (renderer)", detail: "no pinned binary and Playwright-managed Chromium is not installed — set TRACEREEL_CHROMIUM_PATH or run setup" });
         }
       }
     } catch (e) {
-      lines.push({ ok: false, label: "chromium (renderer)", detail: `${(e as Error).message} — set TAKEONE_CHROMIUM_PATH or run setup` });
+      lines.push({ ok: false, label: "chromium (renderer)", detail: `${(e as Error).message} — set TRACEREEL_CHROMIUM_PATH or run setup` });
     }
     try {
       const { execFileSync } = await import("node:child_process");
@@ -587,7 +753,7 @@ program
     try {
       const { mkdtempSync, rmSync } = await import("node:fs");
       const { tmpdir } = await import("node:os");
-      const d = mkdtempSync(join(tmpdir(), "muse-takeone-"));
+      const d = mkdtempSync(join(tmpdir(), "tracereel-"));
       rmSync(d, { recursive: true });
       lines.push({ ok: true, label: "write", detail: "temp dir writable" });
     } catch (e) {
@@ -823,7 +989,7 @@ WHEN SOMETHING FAILS
 MCP
   \`takeone mcp\` serves all of this as MCP tools (takeone_do, takeone_look, takeone_export, takeone_dry_run, takeone_record, …).
   Each reply carries the screenshot itself, so one call acts and shows the page.
-  TAKEONE_SESSION_PORT=9322 gives a second agent on the same machine its own browser.
+  TRACEREEL_SESSION_PORT=9322 gives a second agent on the same machine its own browser.
 
 THE LOOK (after the export works)
   Edit the exported file's config: viewport/deviceScaleFactor (capture), output (video size,
@@ -852,10 +1018,10 @@ function progress(done: number, total: number) {
 
 // No discovery command may hang silently: a stuck page is a failure, reported as one.
 const BUDGETS: Record<string, number> = { find: 60, explore: 120, look: 60 };
-const budget = Number(process.env.TAKEONE_BUDGET ?? BUDGETS[process.argv[2] ?? ""] ?? 0);
+const budget = Number(process.env.TRACEREEL_BUDGET ?? process.env.TAKEONE_BUDGET ?? BUDGETS[process.argv[2] ?? ""] ?? 0);
 if (budget > 0) {
   setTimeout(() => {
-    console.error(`takeone ${process.argv[2]} gave up after ${budget}s: the page never became ready. Raise with TAKEONE_BUDGET=<seconds> if the app is really that slow.`);
+    console.error(`tracereel ${process.argv[2]} gave up after ${budget}s: the page never became ready. Raise with TRACEREEL_BUDGET=<seconds> if the app is really that slow.`);
     process.exit(124);
   }, budget * 1000).unref();
 }
