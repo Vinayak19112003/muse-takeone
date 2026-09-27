@@ -206,11 +206,14 @@ export function validateReconstructionInput(input: unknown, baseDir: string): Va
     }
   };
 
-  const checkActions = (actions: unknown, where: string) => {
+  const checkActions = (actions: unknown, where: string, actionPath?: (localIndex: number) => string) => {
     if (actions === undefined) return 0;
     if (!Array.isArray(actions)) { err("INVALID_ACTIONS", `${where}.actions must be an array`, { path: `${where}.actions` }); return 0; }
     actions.forEach((a: unknown, ai: number) => {
-      const aw = `${where}.actions[${ai}]`;
+      // Default: actions nested under the frame/state being checked. The
+      // states-form passes actionPath so errors point at the original
+      // top-level actions[n] the user wrote, not the derived grouping.
+      const aw = actionPath ? actionPath(ai) : `${where}.actions[${ai}]`;
       if (!a || typeof a !== "object") { err("INVALID_ACTION", `${aw} must be an object`, { path: aw }); return; }
       const ac = a as Record<string, unknown>;
       if (!ACTION_KINDS.includes(ac.kind as string)) {
@@ -319,7 +322,11 @@ export function validateReconstructionInput(input: unknown, baseDir: string): Va
         });
         for (const [fromId, group] of byFrom) {
           const si = states.findIndex((s) => (s as Record<string, unknown>).id === fromId);
-          checkActions(group.map((g) => g.action), `states[${si}]`);
+          checkActions(
+            group.map((g) => g.action),
+            `states[${si}]`,
+            (li) => `actions[${group[li].index}]`,
+          );
         }
         // Actions that failed the from-check still need kind validation; do a light pass.
         actions.forEach((a: unknown, ai: number) => {
