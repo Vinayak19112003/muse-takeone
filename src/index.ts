@@ -86,7 +86,10 @@ export {
   loadBundle,
   isBundleDir,
   traceScreenshotFiles,
+  traceSegmentFiles,
   BUNDLE_SUFFIX,
+  SEGMENTS_DIR,
+  FRAMES_DIR,
   type BundleMetadata,
   type LoadedBundle,
 } from "./bundle.js";

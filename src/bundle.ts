@@ -5,18 +5,20 @@
  *   demo.tracereel/
  *   ├── trace.json        normalized TraceReel Trace v1 (states/actions or frames)
  *   ├── frames/           the screenshots, referenced relative to trace.json
+ *   ├── segments/         declared video-segment assets (roadmap; v1 accepts, does not render)
  *   └── metadata.json     producer info, provenance, adapter warnings
  *
  * A normal directory is enough — no archive format. Everything stays
  * relative, so bundles can be copied, zipped, or committed.
  */
-import { existsSync, mkdirSync, readFileSync, copyFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, copyFileSync, writeFileSync, readdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import type { TraceReelTrace } from "./trace/types.js";
 
 export const BUNDLE_SUFFIX = ".tracereel";
 export const TRACE_FILE = "trace.json";
 export const FRAMES_DIR = "frames";
+export const SEGMENTS_DIR = "segments";
 export const METADATA_FILE = "metadata.json";
 
 export interface BundleMetadata {
@@ -43,6 +45,8 @@ export interface LoadedBundle {
   metadata: BundleMetadata;
   /** Absolute paths of the frames in bundle order. */
   frameFiles: string[];
+  /** Absolute paths of declared video-segment assets (roadmap, not rendered by v1). */
+  segmentFiles: string[];
 }
 
 /** Collect the screenshot files a trace references, in trace order. */
@@ -50,6 +54,12 @@ export function traceScreenshotFiles(trace: TraceReelTrace): string[] {
   const files: string[] = [];
   for (const s of trace.states ?? []) files.push(s.screenshot);
   for (const f of trace.frames ?? []) files.push(f.file);
+  return files;
+}
+
+/** Collect the video-segment files a trace references (roadmap assets, not rendered by v1). */
+export function traceSegmentFiles(trace: TraceReelTrace): string[] {
+  const files: string[] = [];
   for (const seg of trace.videoSegments ?? []) {
     if (seg.file) files.push(seg.file);
   }
@@ -59,7 +69,10 @@ export function traceScreenshotFiles(trace: TraceReelTrace): string[] {
 /**
  * Write a normalized trace to `<dir>` as a bundle. Screenshots are copied
  * from `framesSourceDir` (where trace-relative paths currently point) into
- * `frames/`, and the trace's paths are rewritten to `frames/<basename>`.
+ * `frames/`, video segments into `segments/`; the trace's paths are rewritten
+ * to match. Refuses to write into a non-empty directory, and rejects two
+ * different source files that share a basename (they would overwrite each
+ * other on copy).
  */
 export function writeBundle(
   dir: string,
@@ -69,29 +82,58 @@ export function writeBundle(
     adapter: string;
     warnings?: string[];
     producer?: string;
+    /** Override for deterministic builds; defaults to now. Metadata-only, never affects rendering. */
+    bundledAt?: string;
   },
 ): { dir: string; metadata: BundleMetadata } {
   const bundleDir = dir.endsWith(BUNDLE_SUFFIX) ? dir : dir + BUNDLE_SUFFIX;
   const abs = resolve(bundleDir);
+  if (existsSync(abs) && readdirSync(abs).length > 0) {
+    throw new Error(
+      `bundle destination is not empty: ${abs} — remove it first or choose another directory`,
+    );
+  }
   const framesDir = join(abs, FRAMES_DIR);
   mkdirSync(framesDir, { recursive: true });
 
-  const rewritten: TraceReelTrace = structuredClone(trace);
-  const copied: string[] = [];
-  for (const f of traceScreenshotFiles(rewritten)) {
-    const src = resolve(opts.framesSourceDir, f);
+  const copyAsset = (rel: string, destDir: string, seen: Map<string, string>): string => {
+    const src = resolve(opts.framesSourceDir, rel);
     if (!existsSync(src)) {
       throw new Error(`screenshot not found: ${src}`);
     }
-    const destName = basename(f);
-    copyFileSync(src, join(framesDir, destName));
-    copied.push(destName);
+    const destName = basename(rel);
+    const prev = seen.get(destName);
+    if (prev !== undefined && prev !== src) {
+      throw new Error(
+        `duplicate asset basename "${destName}": ${prev} and ${src} would overwrite each other — rename one`,
+      );
+    }
+    seen.set(destName, src);
+    copyFileSync(src, join(destDir, destName));
+    return destName;
+  };
+
+  const rewritten: TraceReelTrace = structuredClone(trace);
+  const seenShots = new Map<string, string>();
+  for (const f of traceScreenshotFiles(rewritten)) {
+    copyAsset(f, framesDir, seenShots);
   }
-  const rewrite = (p: string) => join(FRAMES_DIR, basename(p));
-  for (const s of rewritten.states ?? []) s.screenshot = rewrite(s.screenshot);
-  for (const f of rewritten.frames ?? []) f.file = rewrite(f.file);
-  for (const seg of rewritten.videoSegments ?? []) {
-    if (seg.file) seg.file = rewrite(seg.file);
+  const rewriteShot = (p: string) => join(FRAMES_DIR, basename(p));
+  for (const s of rewritten.states ?? []) s.screenshot = rewriteShot(s.screenshot);
+  for (const f of rewritten.frames ?? []) f.file = rewriteShot(f.file);
+
+  const segments = traceSegmentFiles(rewritten);
+  if (segments.length > 0) {
+    const segmentsDir = join(abs, SEGMENTS_DIR);
+    mkdirSync(segmentsDir, { recursive: true });
+    const seenSegs = new Map<string, string>();
+    for (const f of segments) {
+      copyAsset(f, segmentsDir, seenSegs);
+    }
+    const rewriteSeg = (p: string) => join(SEGMENTS_DIR, basename(p));
+    for (const seg of rewritten.videoSegments ?? []) {
+      if (seg.file) seg.file = rewriteSeg(seg.file);
+    }
   }
   if (rewritten.screenshotsDir !== undefined) delete rewritten.screenshotsDir;
 
@@ -100,7 +142,9 @@ export function writeBundle(
     bundleVersion: 1,
     agent: trace.source?.agent ?? "unknown",
     adapter: opts.adapter,
-    bundledAt: new Date().toISOString(),
+    // Wall-clock by design: metadata only, never render input. Override via
+    // opts.bundledAt when a deterministic bundle is needed.
+    bundledAt: opts.bundledAt ?? new Date().toISOString(),
     traceForm: trace.states ? "states" : "frames",
     warnings: opts.warnings ?? [],
     producer: opts.producer,
@@ -135,7 +179,11 @@ export function loadBundle(dir: string): LoadedBundle {
   for (const f of frameFiles) {
     if (!existsSync(f)) throw new Error(`bundle is missing frame: ${f}`);
   }
-  return { dir: abs, trace, metadata, frameFiles };
+  const segmentFiles = traceSegmentFiles(trace).map((f) => resolve(abs, f));
+  for (const f of segmentFiles) {
+    if (!existsSync(f)) throw new Error(`bundle is missing video segment: ${f}`);
+  }
+  return { dir: abs, trace, metadata, frameFiles, segmentFiles };
 }
 
 /** True when the path looks like a bundle directory. */

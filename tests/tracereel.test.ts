@@ -11,7 +11,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, copyFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, copyFileSync, readFileSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -335,4 +335,140 @@ test("M: --require-source matches the raw declared source type after normalizati
     () => assertRequireSource("muse-managed-browser", normalized, engineInput, "manual-screenshots"),
     (e: unknown) => (e as { code?: string }).code === "SOURCE_MISMATCH",
   );
+});
+
+test("N: TraceBuilder action ids are per-builder, not module-global", () => {
+  const b1 = new TraceBuilder({ agent: "muse", viewport: { width: 1280, height: 800 } });
+  b1.state("s1", "a.png");
+  b1.state("s2", "b.png");
+  b1.click({ from: "s1", to: "s2", x: 10, y: 10 });
+  const b2 = new TraceBuilder({ agent: "muse", viewport: { width: 1280, height: 800 } });
+  b2.state("s1", "a.png");
+  b2.state("s2", "b.png");
+  b2.click({ from: "s1", to: "s2", x: 10, y: 10 });
+  const t1 = b1.build();
+  const t2 = b2.build();
+  assert.deepEqual(
+    (t1.actions ?? []).map((a) => (a as { id?: string }).id),
+    (t2.actions ?? []).map((a) => (a as { id?: string }).id),
+  );
+  assert.equal((t1.actions ?? [])[0] && ((t1.actions ?? [])[0] as { id?: string }).id, "a1");
+});
+
+test("O: writeBundle rejects duplicate asset basenames", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tracereel-o-"));
+  const a = join(dir, "a"); const b = join(dir, "b");
+  mkdirSync(a, { recursive: true }); mkdirSync(b, { recursive: true });
+  writeFileSync(join(a, "shot.png"), "a"); writeFileSync(join(b, "shot.png"), "b");
+  const trace = {
+    version: 1,
+    source: { type: "agent-browser", agent: "muse" },
+    viewport: { width: 10, height: 10 },
+    states: [
+      { id: "s1", screenshot: "a/shot.png" },
+      { id: "s2", screenshot: "b/shot.png" },
+    ],
+    actions: [],
+  } as Parameters<typeof writeBundle>[1];
+  assert.throws(
+    () => writeBundle(join(dir, "out"), trace, { framesSourceDir: dir, adapter: "muse" }),
+    /duplicate asset basename "shot\.png"/,
+  );
+});
+
+test("P: writeBundle refuses a non-empty destination", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tracereel-p-"));
+  writeFileSync(join(dir, "a.png"), "x");
+  const trace = {
+    version: 1,
+    source: { type: "agent-browser", agent: "muse" },
+    viewport: { width: 10, height: 10 },
+    states: [{ id: "s1", screenshot: "a.png" }],
+    actions: [],
+  } as Parameters<typeof writeBundle>[1];
+  mkdirSync(join(dir, "out.tracereel"), { recursive: true });
+  writeFileSync(join(dir, "out.tracereel", "stale.txt"), "x");
+  assert.throws(
+    () => writeBundle(join(dir, "out.tracereel"), trace, { framesSourceDir: dir, adapter: "muse" }),
+    /not empty/,
+  );
+  // ...but an existing EMPTY bundle dir is fine.
+  mkdirSync(join(dir, "empty.tracereel"), { recursive: true });
+  const r = writeBundle(join(dir, "empty.tracereel"), trace, {
+    framesSourceDir: dir, adapter: "muse", bundledAt: "2026-01-01T00:00:00.000Z",
+  });
+  assert.equal(r.metadata.bundledAt, "2026-01-01T00:00:00.000Z");
+});
+
+test("Q: bundle round-trips frames + segments with resolved paths", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tracereel-q-"));
+  writeFileSync(join(dir, "a.png"), "img");
+  writeFileSync(join(dir, "clip.mp4"), "vid");
+  const trace = {
+    version: 1,
+    source: { type: "agent-browser", agent: "future-agent" },
+    viewport: { width: 10, height: 10 },
+    states: [{ id: "s1", screenshot: "a.png" }],
+    actions: [],
+    videoSegments: [{ id: "v1", file: "clip.mp4", start: 0, duration: 500 }],
+  } as Parameters<typeof writeBundle>[1];
+  const { dir: bundleDir } = writeBundle(join(dir, "demo"), trace, {
+    framesSourceDir: dir, adapter: "generic",
+  });
+  const loaded = loadBundle(bundleDir);
+  assert.equal(loaded.frameFiles.length, 1);
+  assert.ok(loaded.frameFiles[0].endsWith(join("frames", "a.png")));
+  assert.ok(existsSync(loaded.frameFiles[0]));
+  assert.equal(loaded.segmentFiles.length, 1);
+  assert.ok(loaded.segmentFiles[0].endsWith(join("segments", "clip.mp4")));
+  assert.ok(existsSync(loaded.segmentFiles[0]));
+  assert.equal(loaded.trace.states?.[0].screenshot, join("frames", "a.png"));
+  assert.equal(loaded.trace.videoSegments?.[0].file, join("segments", "clip.mp4"));
+});
+
+test("R: states-form action errors point at the original actions[n]", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tracereel-r-"));
+  mkdirSync(join(dir, "frames"), { recursive: true });
+  for (const f of ["a.png", "b.png", "c.png"]) writeFileSync(join(dir, "frames", f), "x");
+  const trace = {
+    version: 1,
+    source: { type: "agent-browser", agent: "muse" },
+    viewport: { width: 100, height: 100 },
+    screenshotsDir: "frames",
+    states: [
+      { id: "s1", screenshot: "a.png" },
+      { id: "s2", screenshot: "b.png" },
+      { id: "s3", screenshot: "c.png" },
+    ],
+    actions: [
+      { kind: "click", from: "s1", to: "s2", x: 10, y: 10 },
+      { kind: "wait", from: "s2", pauseMs: 100 },
+      { kind: "click", from: "s2", to: "s3", x: 10, y: 10 },
+      // actions[3]: x out of viewport bounds -> error path must be actions[3].x
+      { kind: "click", from: "s1", to: "s2", x: 9999, y: 10 },
+    ],
+  };
+  const res = validateReconstructionInput(trace as Parameters<typeof validateReconstructionInput>[0], dir);
+  const bad = res.errors.find((e) => e.path === "actions[3].x");
+  assert.ok(bad, `expected an error at actions[3].x, got: ${JSON.stringify(res.errors.map((e) => e.path))}`);
+  assert.ok(!res.errors.some((e) => (e.path ?? "").startsWith("states[")), "no derived states[i].actions[j] paths");
+});
+
+test("S: explicit muse adapter never relabels foreign source types as Muse capture", () => {
+  for (const t of ["external-browser", "manual-screenshots"]) {
+    const { trace, warnings } = normalizeTrace(
+      {
+        version: 1,
+        source: { type: t, note: "not muse" },
+        viewport: { width: 10, height: 10 },
+        frames: [{ file: "a.png" }],
+      },
+      { adapter: "muse" },
+    );
+    assert.equal(trace.source?.agent, "unknown");
+    assert.ok(
+      warnings.some((w) => w.includes("NOT as Muse capture")),
+      `expected honesty warning for ${t}`,
+    );
+  }
 });
