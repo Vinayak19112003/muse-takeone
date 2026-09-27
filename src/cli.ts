@@ -17,6 +17,7 @@ import {
   clearSession,
   readSession,
   sessionAlive,
+  sessionPort,
   startSessionDaemon,
   waitForSession,
   ensureSession,
@@ -105,7 +106,12 @@ const program = new Command();
 // compatibility aliases (all bins point at this file). Show whichever name the
 // user invoked, and nudge alias users toward the new name.
 const invokedAs = basename(process.argv[1] ?? "").replace(/\.js$/, "");
-const cliName = invokedAs === "tracereel" ? "tracereel" : invokedAs;
+// Unknown invocation basenames (e.g. `node dist/cli.js` -> "cli") fall back to
+// the primary name instead of leaking an internal file name into help text.
+const cliName =
+  invokedAs === "tracereel" || invokedAs === "takeone" || invokedAs === "muse-takeone"
+    ? invokedAs
+    : "tracereel";
 program.name(cliName).description(pkg.description).version(pkg.version);
 if (invokedAs === "takeone" || invokedAs === "muse-takeone") {
   log(
@@ -157,7 +163,7 @@ sessionCmd
   .description("Launch the session browser and log in once (spawns a detached daemon)")
   .option("--scenario <file>", "reuse this scenario's config and explore.setup for login")
   .option("--url <url>", "page to open after setup")
-  .option("--port <n>", "CDP debug port (or TAKEONE_SESSION_PORT)", String(process.env.TAKEONE_SESSION_PORT || DEFAULT_SESSION_PORT))
+  .option("--port <n>", "CDP debug port (or TRACEREEL_SESSION_PORT)", String(sessionPort()))
   .option("--profile <dir>", "persistent Chromium user data dir", "/tmp/takeone-session")
   .option("--headed", "show the browser window")
   .action(async (o) => {
@@ -983,7 +989,7 @@ WHEN SOMETHING FAILS
 MCP
   \`takeone mcp\` serves all of this as MCP tools (takeone_do, takeone_look, takeone_export, takeone_dry_run, takeone_record, …).
   Each reply carries the screenshot itself, so one call acts and shows the page.
-  TAKEONE_SESSION_PORT=9322 gives a second agent on the same machine its own browser.
+  TRACEREEL_SESSION_PORT=9322 gives a second agent on the same machine its own browser.
 
 THE LOOK (after the export works)
   Edit the exported file's config: viewport/deviceScaleFactor (capture), output (video size,
@@ -1012,10 +1018,10 @@ function progress(done: number, total: number) {
 
 // No discovery command may hang silently: a stuck page is a failure, reported as one.
 const BUDGETS: Record<string, number> = { find: 60, explore: 120, look: 60 };
-const budget = Number(process.env.TAKEONE_BUDGET ?? BUDGETS[process.argv[2] ?? ""] ?? 0);
+const budget = Number(process.env.TRACEREEL_BUDGET ?? process.env.TAKEONE_BUDGET ?? BUDGETS[process.argv[2] ?? ""] ?? 0);
 if (budget > 0) {
   setTimeout(() => {
-    console.error(`takeone ${process.argv[2]} gave up after ${budget}s: the page never became ready. Raise with TAKEONE_BUDGET=<seconds> if the app is really that slow.`);
+    console.error(`tracereel ${process.argv[2]} gave up after ${budget}s: the page never became ready. Raise with TRACEREEL_BUDGET=<seconds> if the app is really that slow.`);
     process.exit(124);
   }, budget * 1000).unref();
 }
