@@ -8,7 +8,10 @@
  */
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import type { AudioProbeResult } from "./types.js";
+
+const require = createRequire(import.meta.url);
 
 export function resolveFfprobe(): string {
   const fromEnv = process.env.FFPROBE_PATH ?? process.env.TRACEREEL_FFPROBE_PATH;
@@ -16,6 +19,11 @@ export function resolveFfprobe(): string {
     if (!existsSync(fromEnv)) throw new Error(`ffprobe not found at ${fromEnv}`);
     return fromEnv;
   }
+  try {
+    const mod: string | { path?: string } | null = require("ffprobe-static");
+    const p = typeof mod === "string" ? mod : mod?.path;
+    if (p && existsSync(p)) return p;
+  } catch {}
   try {
     const which = process.platform === "win32" ? "where ffprobe" : "which ffprobe";
     const out = execSync(which, { encoding: "utf8" }).trim().split("\n")[0];
@@ -48,8 +56,6 @@ export function probeAudioFile(path: string): AudioProbeResult {
       [
         "-v",
         "error",
-        "-select_streams",
-        "a:0",
         "-show_entries",
         "stream=codec_name,sample_rate,channels,duration",
         "-show_entries",
