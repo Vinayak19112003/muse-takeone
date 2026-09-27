@@ -18,8 +18,6 @@ import type {
   AgentAction,
   AgentState,
   RedactionRegion,
-  TraceAudio,
-  TraceNarrationClip,
   TraceReelTrace,
   TraceSource,
   TraceViewport,
@@ -40,23 +38,6 @@ export interface StateOptions {
   holdMs?: number;
   transitionIn?: AgentState["transitionIn"];
   redactions?: RedactionRegion[];
-}
-
-export interface NarrationOptions {
-  /** The spoken text; also used for subtitle cues. */
-  text?: string;
-  /** Advanced override: explicit output-timeline start in ms. */
-  startMs?: number;
-  /** Informational provenance; never fabricated. */
-  generatedBy?: TraceNarrationClip["generatedBy"];
-}
-
-export interface MusicOptions {
-  volume?: number;
-  loop?: boolean;
-  fadeInMs?: number;
-  fadeOutMs?: number;
-  duckUnderNarration?: boolean;
 }
 
 export interface ClickOptions {
@@ -241,32 +222,6 @@ export class TraceBuilder {
   /** The finished trace. Validate it before rendering. */
   build(): TraceReelTrace {
     return structuredClone(this.trace);
-  }
-
-  /**
-   * Attach an agent-generated narration clip to a state. The agent renders the
-   * voice with its own TTS/voice capability; TraceReel only places and mixes it.
-   */
-  narration(stateId: string, audio: string, opts: NarrationOptions = {}): this {
-    this.requireState(stateId);
-    const clip: TraceNarrationClip = { state: stateId, audio };
-    if (opts.text !== undefined) clip.text = opts.text;
-    if (opts.startMs !== undefined) clip.startMs = opts.startMs;
-    if (opts.generatedBy !== undefined) clip.generatedBy = opts.generatedBy;
-    this.trace.narration = [...(this.trace.narration ?? []), clip];
-    return this;
-  }
-
-  /** Supply background music. TraceReel never generates music itself. */
-  music(file: string, opts: MusicOptions = {}): this {
-    const music: TraceAudio["music"] = { file };
-    if (opts.volume !== undefined) music!.volume = opts.volume;
-    if (opts.loop !== undefined) music!.loop = opts.loop;
-    if (opts.fadeInMs !== undefined) music!.fadeInMs = opts.fadeInMs;
-    if (opts.fadeOutMs !== undefined) music!.fadeOutMs = opts.fadeOutMs;
-    if (opts.duckUnderNarration !== undefined) music!.duckUnderNarration = opts.duckUnderNarration;
-    this.trace.audio = { ...(this.trace.audio ?? {}), music };
-    return this;
   }
 
   private requireState(id: string): AgentState {

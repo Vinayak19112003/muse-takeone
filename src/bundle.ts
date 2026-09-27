@@ -5,15 +5,11 @@
  *   demo.tracereel/
  *   ├── trace.json        normalized TraceReel Trace v1 (states/actions or frames)
  *   ├── frames/           the screenshots, referenced relative to trace.json
- *   ├── audio/            agent-supplied audio, referenced relative to trace.json
- *   │   ├── narration/    one voice clip per narrated scene (MP3/WAV/M4A)
- *   │   └── music/        optional background music
  *   ├── segments/         declared video-segment assets (roadmap; v1 accepts, does not render)
  *   └── metadata.json     producer info, provenance, adapter warnings
  *
  * A normal directory is enough — no archive format. Everything stays
- * relative, so bundles can be copied, zipped, or committed. All audio stays
- * local; nothing is ever uploaded.
+ * relative, so bundles can be copied, zipped, or committed.
  */
 import { existsSync, mkdirSync, readFileSync, copyFileSync, writeFileSync, readdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
@@ -24,9 +20,6 @@ export const TRACE_FILE = "trace.json";
 export const FRAMES_DIR = "frames";
 export const SEGMENTS_DIR = "segments";
 export const METADATA_FILE = "metadata.json";
-export const AUDIO_DIR = "audio";
-export const NARRATION_DIR = "narration";
-export const MUSIC_DIR = "music";
 
 export interface BundleMetadata {
   bundleVersion: 1;
@@ -54,10 +47,6 @@ export interface LoadedBundle {
   frameFiles: string[];
   /** Absolute paths of declared video-segment assets (roadmap, not rendered by v1). */
   segmentFiles: string[];
-  /** Absolute paths of agent-supplied narration audio files. */
-  narrationFiles: string[];
-  /** Absolute paths of agent-supplied music files. */
-  musicFiles: string[];
 }
 
 /** Collect the screenshot files a trace references, in trace order. */
@@ -74,22 +63,6 @@ export function traceSegmentFiles(trace: TraceReelTrace): string[] {
   for (const seg of trace.videoSegments ?? []) {
     if (seg.file) files.push(seg.file);
   }
-  return files;
-}
-
-/** Collect the narration audio files a trace references. */
-export function traceNarrationFiles(trace: TraceReelTrace): string[] {
-  const files: string[] = [];
-  for (const n of trace.narration ?? []) {
-    if (n.audio) files.push(n.audio);
-  }
-  return files;
-}
-
-/** Collect the music files a trace references. */
-export function traceMusicFiles(trace: TraceReelTrace): string[] {
-  const files: string[] = [];
-  if (trace.audio?.music?.file) files.push(trace.audio.music.file);
   return files;
 }
 
@@ -162,28 +135,6 @@ export function writeBundle(
       if (seg.file) seg.file = rewriteSeg(seg.file);
     }
   }
-
-  // Agent-supplied audio: narration clips -> audio/narration/, music -> audio/music/.
-  const narrFiles = traceNarrationFiles(rewritten);
-  if (narrFiles.length > 0) {
-    const narrDir = join(abs, AUDIO_DIR, NARRATION_DIR);
-    mkdirSync(narrDir, { recursive: true });
-    const seenNarr = new Map<string, string>();
-    for (const f of narrFiles) copyAsset(f, narrDir, seenNarr);
-    const rewriteNarr = (p: string) => join(AUDIO_DIR, NARRATION_DIR, basename(p));
-    for (const n of rewritten.narration ?? []) {
-      if (n.audio) n.audio = rewriteNarr(n.audio);
-    }
-  }
-  const musicFiles = traceMusicFiles(rewritten);
-  if (musicFiles.length > 0) {
-    const musicDir = join(abs, AUDIO_DIR, MUSIC_DIR);
-    mkdirSync(musicDir, { recursive: true });
-    const seenMusic = new Map<string, string>();
-    for (const f of musicFiles) copyAsset(f, musicDir, seenMusic);
-    const rewriteMusic = (p: string) => join(AUDIO_DIR, MUSIC_DIR, basename(p));
-    if (rewritten.audio?.music?.file) rewritten.audio.music.file = rewriteMusic(rewritten.audio.music.file);
-  }
   if (rewritten.screenshotsDir !== undefined) delete rewritten.screenshotsDir;
 
   writeFileSync(join(abs, TRACE_FILE), JSON.stringify(rewritten, null, 2) + "\n");
@@ -232,15 +183,7 @@ export function loadBundle(dir: string): LoadedBundle {
   for (const f of segmentFiles) {
     if (!existsSync(f)) throw new Error(`bundle is missing video segment: ${f}`);
   }
-  const narrationFiles = traceNarrationFiles(trace).map((f) => resolve(abs, f));
-  for (const f of narrationFiles) {
-    if (!existsSync(f)) throw new Error(`bundle is missing narration audio: ${f}`);
-  }
-  const musicFiles = traceMusicFiles(trace).map((f) => resolve(abs, f));
-  for (const f of musicFiles) {
-    if (!existsSync(f)) throw new Error(`bundle is missing music: ${f}`);
-  }
-  return { dir: abs, trace, metadata, frameFiles, segmentFiles, narrationFiles, musicFiles };
+  return { dir: abs, trace, metadata, frameFiles, segmentFiles };
 }
 
 /** True when the path looks like a bundle directory. */
