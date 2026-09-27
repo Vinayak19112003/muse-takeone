@@ -6,7 +6,7 @@
     "muse-takeone": "./dist/cli.js"
   },
   "bugs": {
-    "url": "https://github.com/Vinayak19112003/muse-takeone/issues"
+    "url": "https://github.com/Vinayak19112003/tracereel/issues"
   },
   "dependencies": {
     "commander": "^15.0.0",
@@ -41,7 +41,7 @@
     "docs",
     "examples"
   ],
-  "homepage": "https://github.com/Vinayak19112003/muse-takeone#readme",
+  "homepage": "https://github.com/Vinayak19112003/tracereel#readme",
   "keywords": [
     "tracereel",
     "ai-agent",
@@ -59,7 +59,7 @@
   "name": "tracereel",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Vinayak19112003/muse-takeone.git"
+    "url": "git+https://github.com/Vinayak19112003/tracereel.git"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

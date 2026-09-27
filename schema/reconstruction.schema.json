@@ -1,5 +1,5 @@
 {
-  "$id": "https://github.com/Vinayak19112003/muse-takeone/schema/reconstruction.schema.json",
+  "$id": "https://github.com/Vinayak19112003/tracereel/schema/reconstruction.schema.json",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
   "definitions": {
