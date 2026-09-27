@@ -43,12 +43,22 @@ export const MuseAdapter: TraceReelAdapter = {
       trace.source = { ...(src as object), agent: (src.agent as string) || "muse" } as TraceReelTrace["source"];
     } else if (src.type !== undefined) {
       // Unknown legacy source types (external-browser, manual-screenshots):
-      // keep rendering, attribute to Muse only if the adapter was chosen.
+      // never relabel someone else's capture as Muse's. Keep the declared
+      // agent (or "unknown") so provenance stays honest even when this
+      // adapter was selected explicitly.
+      const declaredAgent = typeof src.agent === "string" && src.agent ? src.agent : "unknown";
       warnings.push(
         `source.type "${String(src.type)}" is not part of TraceReel Trace v1; ` +
-          `treated as { "type": "agent-browser", "agent": "muse" }.`,
+          `kept as { "type": "agent-browser", "agent": "${declaredAgent}" }, NOT as Muse capture.`,
       );
-      trace.source = { type: "agent-browser", agent: "muse" };
+      trace.source = {
+        type: "agent-browser",
+        agent: declaredAgent,
+        session: src.session as string | undefined,
+        captureTool: src.captureTool as string | undefined,
+        capturedAt: src.capturedAt as string | undefined,
+        note: src.note as string | undefined,
+      };
     } else {
       warnings.push(
         "input has no source; assumed { \"type\": \"agent-browser\", \"agent\": \"muse\" }. " +
