@@ -4,3 +4,5 @@ recordings
 *.log
 .DS_Store
 .takeone
+.reconstruct
+.visual-qa
