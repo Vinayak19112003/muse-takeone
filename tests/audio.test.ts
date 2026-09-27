@@ -169,6 +169,18 @@ test("music shorter than the video loops when loop=true", () => {
   assert.equal(plan.music!.loops, true);
 });
 
+test("music with loop=false is not looped (no aloop in the graph)", () => {
+  const { dir, trace, manifest } = makeFixture();
+  tone(join(dir, "audio", "music", "short.m4a"), 3, 110);
+  trace.audio!.music!.file = "audio/music/short.m4a";
+  trace.audio!.music!.loop = false;
+  const plan = planAudio(trace, manifest, { baseDir: dir });
+  assert.equal(plan.errors.length, 0);
+  assert.equal(plan.warnings.some((w) => w.code === "MUSIC_ENDS_EARLY"), true);
+  const spec = buildMixSpec(plan, dir);
+  assert.ok(!spec.filterComplex.includes("aloop"), "aloop must not appear when loop=false");
+});
+
 test("ducking adds sidechain compression to the filter graph, off by default", () => {
   const { dir, trace, manifest } = makeFixture({ musicDuck: true });
   const plan = planAudio(trace, manifest, { baseDir: dir });
@@ -307,6 +319,25 @@ test("audio QA reports concrete metrics, no subjective scores", () => {
   assert.equal(report.metrics.duckingEnabled, true);
   assert.equal(report.metrics.musicVolume, 0.1);
   assert.equal(report.metrics.finalCodec, null); // no finished file passed
+});
+
+test("audio QA reports peak level and silent-track detection", () => {
+  const { dir, trace, manifest } = makeFixture();
+  const plan = planAudio(trace, manifest, { baseDir: dir });
+  const silent = join(dir, "qa-silent.mp4");
+  const durS = (Math.round(manifest.duration) / 1000).toFixed(3);
+  execFileSync(ffmpeg(), ["-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", `testsrc=duration=${durS}:size=320x240:rate=15`,
+    "-c:v", "libx264", "-pix_fmt", "yuv420p", silent], { stdio: "pipe" });
+  const mixed = join(dir, "qa-final.mp4");
+  muxAudio({ videoFile: silent, plan, baseDir: dir, outFile: mixed });
+  const report = qaAudio(plan, { outFile: mixed });
+  assert.equal(report.metrics.finalCodec, "aac");
+  assert.equal(report.metrics.finalSampleRate, 48000);
+  assert.equal(report.metrics.finalChannels, 2);
+  assert.ok(typeof report.metrics.maxVolumeDb === "number", "peak level measured from stderr volumedetect");
+  assert.ok(report.metrics.maxVolumeDb! <= -0.4, `limiter ceiling respected (peak ${report.metrics.maxVolumeDb} dB)`);
+  assert.equal(report.metrics.silent, false);
 });
 
 test("trace without audio plans cleanly (backward compatibility)", () => {

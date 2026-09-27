@@ -5,7 +5,7 @@
  * onset times, overflows, missing files, clipping protection presence, codec,
  * sample rate, channels, music presence, ducking state, and silence detection.
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolveFfmpeg } from "../ffmpeg.js";
 import { resolveFfprobe, probeAudioFile } from "./probe.js";
@@ -17,18 +17,24 @@ export interface QaAudioOptions {
   outFile?: string;
 }
 
-/** Mean volume of the final audio in dB; null when it cannot be measured. */
-function meanVolumeDb(path: string): number | null {
+/** Mean and max volume of an audio stream in dB; nulls when unmeasurable.
+ * volumedetect reports on stderr, so stderr (not stdout) is parsed. */
+function volumeStats(path: string): { meanDb: number | null; maxDb: number | null } {
   try {
-    const out = execFileSync(
+    const res = spawnSync(
       resolveFfmpeg(),
       ["-hide_banner", "-v", "info", "-i", path, "-map", "0:a:0", "-af", "volumedetect", "-f", "null", "-"],
-      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], maxBuffer: 16 * 1024 * 1024 },
+      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
     );
-    const m = /mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB/.exec(out + "");
-    return m ? Number(m[1]) : null;
+    const stderr = res.stderr ?? "";
+    const mean = /mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB/.exec(stderr);
+    const max = /max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB/.exec(stderr);
+    return {
+      meanDb: mean ? Number(mean[1]) : null,
+      maxDb: max ? Number(max[1]) : null,
+    };
   } catch {
-    return null;
+    return { meanDb: null, maxDb: null };
   }
 }
 
@@ -52,6 +58,7 @@ export function qaAudio(plan: AudioPlan, opts: QaAudioOptions = {}): AudioQaRepo
     finalChannels: null,
     finalDurationMs: null,
     silent: null,
+    maxVolumeDb: null,
   };
 
   // Plan-level warnings (these mirror plan warnings as plain QA strings).
@@ -88,10 +95,16 @@ export function qaAudio(plan: AudioPlan, opts: QaAudioOptions = {}): AudioQaRepo
       if (metrics.finalSampleRate !== AUDIO_OUTPUT.sampleRate) {
         warnings.push(`[audio] final sample rate is ${metrics.finalSampleRate ?? "unknown"} Hz, expected ${AUDIO_OUTPUT.sampleRate} Hz`);
       }
-      const meanDb = meanVolumeDb(outFile);
+      const { meanDb, maxDb } = volumeStats(outFile);
       if (meanDb !== null) {
         metrics.silent = meanDb <= -60;
         if (metrics.silent) warnings.push("[audio] final audio track is silent (mean volume <= -60 dB)");
+      }
+      if (maxDb !== null) {
+        metrics.maxVolumeDb = maxDb;
+        // The mix chain ends in alimiter=limit=0.95 (~-0.45 dB); a peak above
+        // that means the limiter is not protecting the mix.
+        if (maxDb > -0.4) warnings.push(`[audio] clipping risk: peak ${maxDb.toFixed(1)} dB exceeds the limiter ceiling`);
       }
     }
   }

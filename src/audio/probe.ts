@@ -48,6 +48,8 @@ export function probeAudioFile(path: string): AudioProbeResult {
       [
         "-v",
         "error",
+        "-select_streams",
+        "a:0",
         "-show_entries",
         "stream=codec_name,sample_rate,channels,duration",
         "-show_entries",

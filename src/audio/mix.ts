@@ -6,7 +6,7 @@
  *   narration clip i -> aresample -> stereo -> adelay to its scene start -> [n{i}]
  *   [n0][n1]... -> amix (duration=longest, no normalization) -> [narr]
  *
- *   music -> aresample -> stereo -> aloop -> atrim to video duration
+ *   music -> aresample -> stereo -> [aloop] -> atrim to video duration
  *         -> volume -> afade in/out -> [mus0]
  *   [mus0][narr] -> sidechaincompress (only when ducking enabled) -> [mus]
  *
@@ -79,12 +79,16 @@ export function buildMixSpec(plan: AudioPlan, baseDir: string): MixSpec {
     const chain: string[] = [
       "aresample=48000",
       "aformat=channel_layouts=stereo",
+    ];
+    if (pm.loops) {
       // Loop a effectively unbounded number of samples, then trim to the video.
-      "aloop=loop=-1:size=2000000000",
+      chain.push("aloop=loop=-1:size=2000000000");
+    }
+    chain.push(
       `atrim=0:${durS}`,
       "asetpts=PTS-STARTPTS",
       `volume=${pm.volume}`,
-    ];
+    );
     if (pm.fadeInMs > 0) chain.push(`afade=t=in:st=0:d=${s(pm.fadeInMs)}`);
     if (pm.fadeOutMs > 0) {
       chain.push(`afade=t=out:st=${s(plan.videoDurationMs - pm.fadeOutMs)}:d=${s(pm.fadeOutMs)}`);

@@ -522,6 +522,13 @@ program
       process.exitCode = 1;
       return;
     }
+    // Validate --subtitles before doing any work, so a bad value fails fast.
+    const wantSubtitles = o.subtitles ? o.subtitles.toLowerCase() : null;
+    if (wantSubtitles && !["srt", "vtt", "both"].includes(wantSubtitles)) {
+      console.error(`audio: --subtitles must be srt, vtt, or both (got ${o.subtitles})`);
+      process.exitCode = 1;
+      return;
+    }
     const videoPath = resolve(videoFile);
     try {
       const loaded = await loadTraceInput(o.trace, o.adapter);
@@ -562,21 +569,15 @@ program
       log(`muxed: video stream copied (${muxed.videoCodec}), audio ${muxed.audioCodec} ${muxed.audioSampleRate}Hz ${muxed.audioChannels}ch`);
 
       let subtitleFiles: string[] = [];
-      if (o.subtitles) {
+      if (wantSubtitles) {
         const { cuesFromPlan, cuesToSrt, cuesToVtt } = await import("./audio/subtitles.js");
         const cues = cuesFromPlan(plan);
-        const want = o.subtitles.toLowerCase();
-        if (!["srt", "vtt", "both"].includes(want)) {
-          log(`error: --subtitles must be srt, vtt, or both (got ${o.subtitles})`);
-          process.exitCode = 1;
-          return;
-        }
         const base = join(dirname(outFile), basename(outFile, extname(outFile)));
-        if (want === "srt" || want === "both") {
+        if (wantSubtitles === "srt" || wantSubtitles === "both") {
           writeFileSync(`${base}.srt`, cuesToSrt(cues));
           subtitleFiles.push(`${base}.srt`);
         }
-        if (want === "vtt" || want === "both") {
+        if (wantSubtitles === "vtt" || wantSubtitles === "both") {
           writeFileSync(`${base}.vtt`, cuesToVtt(cues));
           subtitleFiles.push(`${base}.vtt`);
         }

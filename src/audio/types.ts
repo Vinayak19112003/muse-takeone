@@ -111,6 +111,10 @@ export interface AudioQaMetrics {
   finalChannels: number | null;
   finalDurationMs: number | null;
   silent: boolean | null;
+  /** Peak level of the final mix in dB (volumedetect max_volume); the mix
+   *  limiter targets 0.95 (-0.45 dB), so peaks above that indicate the
+   *  limiter is not in the chain. */
+  maxVolumeDb: number | null;
 }
 
 export interface AudioQaReport {
