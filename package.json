@@ -1,8 +1,9 @@
 {
   "author": "Vinayak Deshmuk",
   "bin": {
-    "muse-takeone": "./dist/cli.js",
-    "takeone": "./dist/cli.js"
+    "tracereel": "./dist/cli.js",
+    "takeone": "./dist/cli.js",
+    "muse-takeone": "./dist/cli.js"
   },
   "bugs": {
     "url": "https://github.com/Vinayak19112003/muse-takeone/issues"
@@ -13,7 +14,7 @@
     "playwright": "^1.63.0",
     "tsx": "^4.23.13"
   },
-  "description": "Turn workflows performed in Muse's managed browser into polished demo videos: capture real browser states, reconstruct the interaction timeline, render smooth 1080p60 MP4. Built on TakeOne.",
+  "description": "TraceReel turns AI-agent browser traces into polished demo videos: normalize any agent's trace, reconstruct the interaction timeline, render smooth 1080p60 MP4. Muse is the first integration.",
   "devDependencies": {
     "@types/node": "^26.6.0",
     "ajv": "^8.17.1",
@@ -41,20 +42,20 @@
   ],
   "homepage": "https://github.com/Vinayak19112003/muse-takeone#readme",
   "keywords": [
-    "muse",
-    "screen-recording",
-    "browser-automation",
+    "tracereel",
     "ai-agent",
+    "browser-automation",
+    "demo-video",
+    "screen-recording",
     "video",
     "typescript",
     "ffmpeg",
-    "demo-video",
     "cursor",
     "reconstruction"
   ],
   "license": "MIT",
   "main": "./dist/index.js",
-  "name": "muse-takeone",
+  "name": "tracereel",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Vinayak19112003/muse-takeone.git"

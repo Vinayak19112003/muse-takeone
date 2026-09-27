@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import type { BrowserConfig, ViewportConfig } from "./types.js";
 
 export function resolveExecutablePath(cfg: BrowserConfig): string | undefined {
-  const fromEnv = process.env.TAKEONE_CHROMIUM_PATH;
+  const fromEnv = process.env.TRACEREEL_CHROMIUM_PATH ?? process.env.TAKEONE_CHROMIUM_PATH;
   const p = cfg.executablePath ?? fromEnv;
   if (p) {
     if (!existsSync(p)) throw new Error(`Chromium executable not found at ${p}`);

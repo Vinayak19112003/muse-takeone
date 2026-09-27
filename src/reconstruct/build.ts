@@ -226,6 +226,7 @@ const NEXT_FRAME_AFTER = {
 
 /** Every known capture-source type. Kept in code so --require-source typos fail loudly. */
 export const RECONSTRUCTION_SOURCE_TYPES: ReconstructionSource["type"][] = [
+  "agent-browser",
   "muse-managed-browser",
   "external-browser",
   "manual-screenshots",

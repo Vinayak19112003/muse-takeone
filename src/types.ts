@@ -349,7 +349,11 @@ export type RecordingMode = "native" | "reconstructed";
  * "external-browser": some other browser session the operator controls.
  * "manual-screenshots": screenshots captured by hand or by an unknown pipeline.
  */
-export type ReconstructionSourceType = "muse-managed-browser" | "external-browser" | "manual-screenshots";
+export type ReconstructionSourceType =
+  | "agent-browser"
+  | "muse-managed-browser"
+  | "external-browser"
+  | "manual-screenshots";
 
 export interface ReconstructionSource {
   type: ReconstructionSourceType;
@@ -360,6 +364,12 @@ export interface ReconstructionSource {
    * nothing in a PNG proves which tool wrote it.
    */
   captureTool?: string;
+  /**
+   * Which agent's trace this is, e.g. "muse", "grokbot". Only meaningful for
+   * source.type "agent-browser"; the renderer ignores it (agent identity
+   * never changes the output).
+   */
+  agent?: string;
   /** ISO 8601 timestamp of the capture session, e.g. "2026-09-27T10:00:00+05:30". */
   capturedAt?: string;
   /** Viewport the screenshots were captured at; should match the input viewport. */
