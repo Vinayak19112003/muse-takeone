@@ -65,17 +65,6 @@ export interface AgentCapabilities {
   videoSegments: boolean;
   /** Screenshots captured without the OS cursor baked in. */
   cursorFreeScreenshots: boolean;
-  /**
-   * The agent can generate narration audio with its own TTS/voice capability
-   * and hand TraceReel the finished clips. TraceReel itself never provides
-   * TTS. For Muse this is true only where its TTS skill/tool actually exists.
-   */
-  narrationAudioGeneration?: boolean;
-  /**
-   * Genuine captured browser/system audio supplied by the agent.
-   * False until an agent actually captures it; never synthesized or faked.
-   */
-  browserAudio?: boolean;
 }
 
 /** One observed browser state: a real screenshot. */
@@ -144,77 +133,6 @@ export interface TraceVideoSegment {
 }
 
 /**
- * Who generated a narration clip. Informational provenance only — declarative,
- * never verified, and never fabricated. Every field is optional; omit whatever
- * the agent does not actually know.
- */
-export interface NarrationGeneratedBy {
-  /** Agent that produced the clip, e.g. "muse". */
-  agent?: string;
-  /** Which of the agent's tools made it, e.g. "tts". */
-  tool?: string;
-  /** Voice provider the agent used, e.g. "meta-ai". Never invent this. */
-  provider?: string;
-  /** Voice name/id, only when the agent actually knows it. */
-  voice?: string | null;
-  /** BCP-47 language tag, e.g. "en". */
-  language?: string;
-  /** Playback speed the agent used, e.g. 1. */
-  speed?: number;
-}
-
-/**
- * One agent-generated narration clip, placed on the final output timeline by
- * the state it belongs to. TraceReel never generates voice itself: the
- * capturing agent writes the narration, renders it with its own TTS/voice
- * capability, and hands TraceReel the finished audio file.
- */
-export interface TraceNarrationClip {
-  /**
-   * State id (states-form traces) or 0-based frame index as a string
-   * (frames-form traces). The clip starts when this state/scene starts on the
-   * final output timeline.
-   */
-  state: string;
-  /** The spoken text, used for subtitle cues when present. */
-  text?: string;
-  /** Audio file (MP3/WAV/M4A-AAC), relative to the trace file or bundle's audio/. */
-  audio: string;
-  /**
-   * Advanced override: explicit start on the final output timeline, in ms.
-   * Normally omitted — state-based placement is the default.
-   */
-  startMs?: number;
-  /** Informational provenance; every field optional, never fabricated. */
-  generatedBy?: NarrationGeneratedBy;
-}
-
-/** Optional background music, supplied by the agent. TraceReel never generates music. */
-export interface TraceMusic {
-  /** Music file (MP3/WAV/M4A-AAC), relative to the trace file or bundle's audio/. */
-  file: string;
-  /** Linear gain 0..1. Default 0.10. */
-  volume?: number;
-  /** Loop/trim to the final video duration. Default true. */
-  loop?: boolean;
-  /** Fade-in at the start, in ms. Default 0. */
-  fadeInMs?: number;
-  /** Fade-out at the end, in ms. Default 0. */
-  fadeOutMs?: number;
-  /**
-   * Lower the music while narration plays, restore it smoothly after.
-   * Default false (predictable behavior); implemented with FFmpeg
-   * sidechain compression.
-   */
-  duckUnderNarration?: boolean;
-}
-
-/** Trace-level audio: everything here is agent-supplied. TraceReel mixes; it never synthesizes. */
-export interface TraceAudio {
-  music?: TraceMusic;
-}
-
-/**
  * TraceReel Trace v1.
  *
  * Two shapes are accepted and mean the same thing:
@@ -239,13 +157,6 @@ export interface TraceReelTrace {
   shots?: import("../types.js").CameraShot[];
   /** Real-motion clips (accepted, not yet rendered). */
   videoSegments?: TraceVideoSegment[];
-  /**
-   * Agent-generated narration clips, placed by state on the output timeline.
-   * TraceReel never generates voice; the agent supplies finished audio files.
-   */
-  narration?: TraceNarrationClip[];
-  /** Trace-level audio: optional agent-supplied background music. */
-  audio?: TraceAudio;
   /**
    * Directory holding the screenshots, relative to the trace file.
    * Default "." (screenshots sit next to the trace).
