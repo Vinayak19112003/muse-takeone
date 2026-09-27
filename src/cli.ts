@@ -506,110 +506,6 @@ sharedOpts(
 });
 
 program
-  .command("audio")
-  .description("Mix agent-supplied narration/music onto a finished video: scene-timed placement, ducking, fades, AAC output, video stream copied (-c:v copy)")
-  .argument("<video>", "finished video from `tracereel reconstruct` (its stream is copied, never re-encoded)")
-  .option("--trace <file>", "trace JSON carrying narration[] and/or audio.music (required)")
-  .option("-o, --out <file>", "output MP4 (default <video-dir>/<video-base>-narrated.mp4)")
-  .option("--adapter <name>", "force an adapter: muse | grokbot | generic (default: picked from the trace source)")
-  .option("--subtitles <format>", "export subtitle cues from narration: srt | vtt | both (written next to the output)")
-  .option("--json", "machine-readable output")
-  .action(async (videoFile: string, o: { trace?: string; out?: string; adapter?: string; subtitles?: string; json?: boolean }) => {
-    const { join, dirname, basename, resolve, sep, extname } = await import("node:path");
-    const { writeFileSync } = await import("node:fs");
-    if (!o.trace) {
-      console.error("audio needs --trace <trace.json>: the narration/music declarations live in the trace");
-      process.exitCode = 1;
-      return;
-    }
-    const videoPath = resolve(videoFile);
-    try {
-      const loaded = await loadTraceInput(o.trace, o.adapter);
-      const { inputPath, baseDir, trace, engineInput } = loaded;
-      const { validateReconstructionInput } = await import("./reconstruct/validate.js");
-      const v = validateReconstructionInput(engineInput, baseDir);
-      if (!v.ok) {
-        for (const e of v.errors) log(`error: ${e.code}: ${e.message}`);
-        log("audio aborted: the trace's visual input is invalid");
-        process.exitCode = 1;
-        return;
-      }
-      if (!trace.narration?.length && !trace.audio?.music) {
-        log("audio aborted: the trace declares no narration[] and no audio.music — nothing to mix");
-        process.exitCode = 1;
-        return;
-      }
-      const { buildReconstructionManifest } = await import("./reconstruct/build.js");
-      const { RECONSTRUCTION_DEFAULTS, resolveConfig } = await import("./config.js");
-      const manifest = buildReconstructionManifest(engineInput, resolveConfig(RECONSTRUCTION_DEFAULTS, undefined));
-      const { planAudio } = await import("./audio/plan.js");
-      const plan = planAudio(trace, manifest, { baseDir });
-      for (const w of plan.warnings) log(`warning: ${w.code}: ${w.message}`);
-      if (plan.errors.length) {
-        for (const e of plan.errors) log(`error: ${e.code}: ${e.message}${e.suggestion ? ` (${e.suggestion})` : ""}`);
-        log(`audio aborted: ${plan.errors.length} audio error${plan.errors.length === 1 ? "" : "s"}`);
-        process.exitCode = 1;
-        return;
-      }
-      const outFile = resolve(o.out ?? join(dirname(videoPath), `${basename(videoPath, extname(videoPath))}-narrated.mp4`));
-      if (outFile === videoPath) {
-        log("error: refusing to write the narrated video over the input video itself");
-        process.exitCode = 1;
-        return;
-      }
-      const { muxAudio } = await import("./audio/mux.js");
-      const muxed = muxAudio({ videoFile: videoPath, plan, baseDir, outFile });
-      log(`muxed: video stream copied (${muxed.videoCodec}), audio ${muxed.audioCodec} ${muxed.audioSampleRate}Hz ${muxed.audioChannels}ch`);
-
-      let subtitleFiles: string[] = [];
-      if (o.subtitles) {
-        const { cuesFromPlan, cuesToSrt, cuesToVtt } = await import("./audio/subtitles.js");
-        const cues = cuesFromPlan(plan);
-        const want = o.subtitles.toLowerCase();
-        if (!["srt", "vtt", "both"].includes(want)) {
-          log(`error: --subtitles must be srt, vtt, or both (got ${o.subtitles})`);
-          process.exitCode = 1;
-          return;
-        }
-        const base = join(dirname(outFile), basename(outFile, extname(outFile)));
-        if (want === "srt" || want === "both") {
-          writeFileSync(`${base}.srt`, cuesToSrt(cues));
-          subtitleFiles.push(`${base}.srt`);
-        }
-        if (want === "vtt" || want === "both") {
-          writeFileSync(`${base}.vtt`, cuesToVtt(cues));
-          subtitleFiles.push(`${base}.vtt`);
-        }
-        log(`subtitles: ${cues.length} cue(s)${subtitleFiles.length ? ` -> ${subtitleFiles.join(", ")}` : " (no clip had text; nothing written)"}`);
-        if (!cues.length) subtitleFiles = [];
-      }
-
-      const { qaAudio } = await import("./audio/qa.js");
-      const aqa = qaAudio(plan, { outFile });
-      for (const w of aqa.warnings) log(`QA warning ${w}`);
-      const summary = {
-        video: videoPath,
-        outFile: muxed.outFile,
-        videoStreamCopied: true,
-        videoCodec: muxed.videoCodec,
-        narrationClips: aqa.metrics.narrationClips,
-        narrationOnsetsMs: aqa.metrics.narrationOnsetsMs,
-        music: aqa.metrics.musicPresent
-          ? { loops: aqa.metrics.musicLoops, volume: aqa.metrics.musicVolume, ducking: aqa.metrics.duckingEnabled }
-          : null,
-        audio: { codec: aqa.metrics.finalCodec, sampleRate: aqa.metrics.finalSampleRate, channels: aqa.metrics.finalChannels },
-        subtitles: subtitleFiles,
-        audioWarnings: aqa.warnings,
-      };
-      if (o.json) console.log(JSON.stringify(summary, null, 2));
-      else log(`audio done: ${muxed.outFile}`);
-    } catch (e) {
-      log(`audio failed: ${(e as Error).message}`);
-      process.exitCode = 1;
-    }
-  });
-
-program
   .command("validate")
   .description("Validate a trace without rendering anything: adapter normalization, then structural checks with error codes")
   .argument("<input>", "trace JSON: TraceReel Trace v1 (states/actions or frames), or a legacy takeone frame input")
@@ -629,40 +525,24 @@ program
       process.exitCode = 1;
       return;
     }
-    const { inputPath, baseDir, trace, engineInput, adapter } = loaded;
+    const { inputPath, baseDir, engineInput, adapter } = loaded;
     const { errors, warnings, ok } = validateReconstructionInput(engineInput, baseDir);
-    // Audio validation: runs when the trace declares narration or music. Needs
-    // the output timeline, so the manifest is built (cheap — no rendering).
-    let audioErrors: { code: string; path?: string; message: string; suggestion?: string }[] = [];
-    let audioWarnings: { code: string; path?: string; message: string; suggestion?: string }[] = [];
-    if (trace.narration?.length || trace.audio?.music) {
-      const { buildReconstructionManifest } = await import("./reconstruct/build.js");
-      const { RECONSTRUCTION_DEFAULTS, resolveConfig } = await import("./config.js");
-      const { planAudio } = await import("./audio/plan.js");
-      const manifest = buildReconstructionManifest(engineInput, resolveConfig(RECONSTRUCTION_DEFAULTS, undefined));
-      const plan = planAudio(trace, manifest, { baseDir });
-      audioErrors = plan.errors;
-      audioWarnings = plan.warnings;
-    }
-    const allErrors = [...errors, ...audioErrors];
-    const allWarnings = [...warnings, ...audioWarnings];
-    const allOk = ok && audioErrors.length === 0;
     if (o.json) {
       console.log(JSON.stringify({
-        ok: allOk,
+        ok,
         input: inputPath,
         adapter: adapter.name,
         agent: loaded.trace.source?.agent ?? null,
-        errors: allErrors.map((e) => ({ code: e.code, path: e.path ?? null, message: e.message, suggestion: e.suggestion ?? null })),
-        warnings: allWarnings.map((w) => ({ code: w.code, path: w.path ?? null, message: w.message, suggestion: w.suggestion ?? null })),
+        errors: errors.map((e) => ({ code: e.code, path: e.path ?? null, message: e.message, suggestion: e.suggestion ?? null })),
+        warnings: warnings.map((w) => ({ code: w.code, path: w.path ?? null, message: w.message, suggestion: w.suggestion ?? null })),
       }, null, 2));
     } else {
-      for (const w of allWarnings) console.error(`warning: ${w.code}: ${w.message}`);
-      for (const e of allErrors) console.error(`error: ${e.code}: ${e.message}${e.suggestion ? ` (${e.suggestion})` : ""}`);
-      if (allOk) console.log(`valid: ${inputPath} (adapter: ${adapter.name}, ${allWarnings.length} warning${allWarnings.length === 1 ? "" : "s"})`);
-      else console.error(`invalid: ${allErrors.length} error${allErrors.length === 1 ? "" : "s"}`);
+      for (const w of warnings) console.error(`warning: ${w.code}: ${w.message}`);
+      for (const e of errors) console.error(`error: ${e.code}: ${e.message}${e.suggestion ? ` (${e.suggestion})` : ""}`);
+      if (ok) console.log(`valid: ${inputPath} (adapter: ${adapter.name}, ${warnings.length} warning${warnings.length === 1 ? "" : "s"})`);
+      else console.error(`invalid: ${errors.length} error${errors.length === 1 ? "" : "s"}`);
     }
-    process.exitCode = allOk ? 0 : 1;
+    process.exitCode = ok ? 0 : 1;
   });
 
 program
@@ -729,44 +609,6 @@ program
       output: { width: cfg.output.width, height: cfg.output.height, fps: cfg.output.fps, format: cfg.output.format },
       warnings: [...v.warnings.map((w) => `${w.code}: ${w.message}`), ...qa.warnings],
     };
-    // Audio section: plan narration/music onto the output timeline when declared.
-    let audioSection: Record<string, unknown> | null = null;
-    if (trace.narration?.length || trace.audio?.music) {
-      const { planAudio } = await import("./audio/plan.js");
-      const { qaAudio } = await import("./audio/qa.js");
-      const aplan = planAudio(trace, manifest, { baseDir });
-      const aqa = qaAudio(aplan);
-      const m = aplan.music;
-      audioSection = {
-        narrationClips: aplan.narration.map((p) => ({
-          state: p.clip.state,
-          audio: p.clip.audio,
-          startMs: p.startMs,
-          sceneStartMs: p.sceneStartMs,
-          sceneEndMs: p.sceneEndMs,
-          audioDurationMs: p.audioDurationMs,
-          explicitStart: p.explicitStart,
-          generatedBy: p.clip.generatedBy ?? null,
-        })),
-        narrationTotalMs: aqa.metrics.narrationTotalMs,
-        music: m
-          ? {
-              file: m.music.file,
-              loop: m.music.loop ?? true,
-              loopsNeeded: m.loops,
-              volume: m.volume,
-              fadeInMs: m.fadeInMs,
-              fadeOutMs: m.fadeOutMs,
-              duckUnderNarration: m.duckUnderNarration,
-            }
-          : null,
-        finalAudio: { codec: "aac", sampleRate: 48000, channels: 2 },
-        errors: aplan.errors.map((e) => `${e.code}: ${e.message}`),
-        warnings: [...aplan.errors.map((e) => `${e.code}: ${e.message}`), ...aqa.warnings],
-      };
-      (report as Record<string, unknown>).audio = audioSection;
-      for (const w of aplan.warnings) (report.warnings as string[]).push(`${w.code}: ${w.message}`);
-    }
     if (o.json) {
       console.log(JSON.stringify(report, null, 2));
       return;
@@ -784,23 +626,6 @@ program
       console.log(`  ${s.n}. ${s.startMs}..${s.endMs}ms @ (${s.cx}, ${s.cy}) ${s.scale}x`);
     }
     console.log(`output: ${cfg.output.width}x${cfg.output.height}@${cfg.output.fps} ${cfg.output.format}`);
-    if (audioSection) {
-      const clips = audioSection.narrationClips as Array<{ startMs: number }>;
-      console.log(`audio:`);
-      console.log(`  narration clips: ${clips.length}`);
-      console.log(`  narration total duration: ${((audioSection.narrationTotalMs as number) / 1000).toFixed(1)}s`);
-      const mus = audioSection.music as { file: string; loop: boolean; volume: number; duckUnderNarration: boolean } | null;
-      if (mus) {
-        console.log(`  music:`);
-        console.log(`    ${mus.file}`);
-        console.log(`    loop: ${mus.loop ? "yes" : "no"}`);
-        console.log(`    volume: ${Math.round(mus.volume * 100)}%`);
-        console.log(`    ducking: ${mus.duckUnderNarration ? "enabled" : "disabled"}`);
-      } else {
-        console.log(`  music: none`);
-      }
-      console.log(`  final audio: AAC, 48kHz, stereo`);
-    }
     if (report.warnings.length) {
       console.log(`warnings (${report.warnings.length}):`);
       for (const w of report.warnings) console.log(`  - ${w}`);
