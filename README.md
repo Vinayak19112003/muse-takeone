@@ -22,7 +22,17 @@ The renderer never sees agent identity. Adapters normalize each agent's trace fo
 
 ## Install
 
-TraceReel installs from this repository (it is not published to npm):
+```bash
+npm install tracereel
+```
+
+Or install globally for the CLI:
+
+```bash
+npm install -g tracereel
+```
+
+For development or source installation, clone the repository:
 
 ```bash
 git clone https://github.com/Vinayak19112003/tracereel.git
@@ -48,6 +58,57 @@ tracereel reconstruct trace.json -o demo.mp4
 # optional narration + music (agent supplies the audio files; TraceReel mixes):
 tracereel audio demo.mp4 --trace trace.json -o demo-narrated.mp4 --subtitles both
 ```
+
+## Narrated videos
+
+```
+Agent browser trace
+  → agent narration (the agent writes the script AND generates the voice clips with its own TTS)
+  → TraceReel visual reconstruction (silent MP4)
+  → TraceReel audio mix (narration placed on scenes, music, ducking, loudness mastering)
+  → final narrated MP4
+```
+
+TraceReel has no built-in TTS: the agent generates voice clips with its own
+text-to-speech and lists them in the trace; TraceReel receives the clips and
+produces the final audio/video. Minimal example (matches the v0.3.0 schema):
+
+```json
+{
+  "narration": [
+    {
+      "state": "intro",
+      "text": "Welcome to the demo.",
+      "audio": "audio/narration/intro.mp3"
+    }
+  ],
+  "audio": {
+    "music": {
+      "file": "audio/music/background.m4a",
+      "volume": 0.10,
+      "loop": true,
+      "duckUnderNarration": true
+    },
+    "loudness": {
+      "targetLUFS": -16,
+      "maxTruePeakDbTP": -1.5
+    }
+  }
+}
+```
+
+Field notes: `narration` is top-level (not under `audio`); each clip uses
+`audio` (not `file`) for the clip path and `state` for scene placement.
+Music level is `volume` (0..1 linear, not `levelDb`); ducking is
+`music.duckUnderNarration` (there is no `audio.ducking` block).
+
+```bash
+tracereel audio demo.mp4 --trace trace.json -o demo-narrated.mp4 --subtitles both
+```
+
+Output is AAC 48 kHz stereo at −16 LUFS / −1.5 dBTP (configurable), with the
+video stream copied untouched (`-c:v copy`). Full reference:
+[`docs/AUDIO.md`](docs/AUDIO.md).
 
 A trace is states and actions, not frames and hacks:
 

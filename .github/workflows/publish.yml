@@ -23,8 +23,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22.14"
           registry-url: https://registry.npmjs.org
+
+      - name: Upgrade npm and verify toolchain
+        run: |
+          npm install -g npm@^11.15.0
+          node --version
+          npm --version
 
       - name: Verify tag matches package.json version
         run: |
