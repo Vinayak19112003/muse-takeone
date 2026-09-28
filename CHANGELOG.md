@@ -4,6 +4,30 @@ All notable changes to TraceReel (formerly muse-takeone). Format follows [Keep a
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-09-28
+
+### Fixed — smooth scroll reconstruction
+
+- Reconstructed scrolls now animate continuously over their declared
+  duration instead of rendering as slideshow-like page changes: a moving
+  document layer plus a newly revealed strip, composited per frame.
+- Overlapping page content no longer renders as two full screenshots —
+  overlap-aware strip compositing keeps text continuous through the scroll.
+- Fixed and sticky regions are handled separately from the moving document
+  (fixed crossfades in place; sticky moves with its own measured offset).
+- The scrollbar stays viewport-fixed with an interpolated thumb while the
+  document moves underneath it.
+- Measured scroll displacement (deterministic coarse-to-fine normalized
+  cross-correlation) can correct inaccurate declared offsets, with a
+  deterministic fallback and QA warnings (`SCROLL_ALIGNMENT_LOW_CONFIDENCE`
+  and friends) when measurement is unreliable.
+- Correct pre-cut timing so `durationMs` maps to visible motion once, not twice.
+- New scroll QA checks for discontinuities and alignment; scrollplan
+  generation is fully deterministic (no per-frame analysis, no randomness).
+
+**Compatibility:** no trace-format breaking changes; the v0.3.0 audio
+workflow (`tracereel audio`) is unchanged; Node 20+ supported.
+
 ## [0.3.0] — 2026-09-28
 
 ### Added — native agent-audio pipeline
