@@ -99,7 +99,7 @@ export const compositorHtml = `<!doctype html>
     return btoa(bin);
   };
 
-  // f: { cam:{px,py,scale}, cursor:{x,y,pressed,visible}, ripples:[{x,y,p}], uiScale, mix }
+  // f: { cam:{px,py,scale}, cursor:{x,y,pressed,visible}, ripples:[{x,y,p}], uiScale, mix, slide, isScroll }
   window.__draw = (f, img, prevImg) => {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
@@ -120,25 +120,49 @@ export const compositorHtml = `<!doctype html>
       const x1 = Math.min(C.x + C.w, visX0 + W / s), y1 = Math.min(C.y + C.h, visY0 + H / s);
       if (x1 > x0 && y1 > y0) {
         const fx = img.naturalWidth / C.w, fy = img.naturalHeight / C.h;
-        ctx.drawImage(img, (x0 - C.x) * fx, (y0 - C.y) * fy, (x1 - x0) * fx, (y1 - y0) * fy, x0, y0, x1 - x0, y1 - y0);
-        // Crossfade from the previous frame right after a cut: the old image
-        // fades out on top of the new one over MIX_MS, under the same camera.
-        // With f.slide (scroll transitions), the old image also slides in the
-        // scroll direction so the movement reads on screen.
-        if (prevImg && f.mix != null && f.mix < 1) {
-          ctx.globalAlpha = 1 - f.mix;
-          const sp = f.mix * f.mix * (3 - 2 * f.mix); // smoothstep the slide
-          const sx = (f.slide?.x ?? 0) * sp, sy = (f.slide?.y ?? 0) * sp;
-          const ofx = prevImg.naturalWidth / C.w, ofy = prevImg.naturalHeight / C.h;
-          // Widen the culled region by the slide so the moving edge isn't clipped.
-          const pad = Math.max(Math.abs(sx), Math.abs(sy));
-          const qx0 = Math.max(C.x, x0 - pad), qy0 = Math.max(C.y, y0 - pad);
-          const qx1 = Math.min(C.x + C.w, x1 + pad), qy1 = Math.min(C.y + C.h, y1 + pad);
+        if (f.isScroll && prevImg && f.mix != null && f.mix < 1) {
+          // True scroll transition: BOTH screenshots translate with cubic
+          // ease-in-out so overlapping page content stays aligned throughout —
+          // one continuous page moving, not a dissolve. No crossfade is applied.
+          // The old screenshot moves away by slide * sp; the new one enters from
+          // -slide * (1 - sp), so at every instant the shared content lines up.
+          // Limitation: the whole frame translates, so sticky/fixed elements
+          // (e.g. a pinned header) slide with the page instead of staying put.
+          // See docs/limitations.md.
+          const p = f.mix;
+          const sp = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+          const slx = f.slide?.x ?? 0, sly = f.slide?.y ?? 0;
+          // New screenshot first (base layer), translating into place.
           ctx.save();
-          ctx.translate(sx, sy);
-          ctx.drawImage(prevImg, (qx0 - C.x) * ofx, (qy0 - C.y) * ofy, (qx1 - qx0) * ofx, (qy1 - qy0) * ofy, qx0, qy0, qx1 - qx0, qy1 - qy0);
+          ctx.translate(-slx * (1 - sp), -sly * (1 - sp));
+          ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, C.x, C.y, C.w, C.h);
           ctx.restore();
-          ctx.globalAlpha = 1;
+          // Old screenshot on top, translating away.
+          ctx.save();
+          ctx.translate(slx * sp, sly * sp);
+          ctx.drawImage(prevImg, 0, 0, prevImg.naturalWidth, prevImg.naturalHeight, C.x, C.y, C.w, C.h);
+          ctx.restore();
+        } else {
+          ctx.drawImage(img, (x0 - C.x) * fx, (y0 - C.y) * fy, (x1 - x0) * fx, (y1 - y0) * fy, x0, y0, x1 - x0, y1 - y0);
+          // Crossfade from the previous frame right after a cut: the old image
+          // fades out on top of the new one over MIX_MS, under the same camera.
+          // With f.slide (legacy slide nudge), the old image also slides in the
+          // scroll direction so the movement reads on screen.
+          if (prevImg && f.mix != null && f.mix < 1) {
+            ctx.globalAlpha = 1 - f.mix;
+            const sp = f.mix * f.mix * (3 - 2 * f.mix); // smoothstep the slide
+            const sx = (f.slide?.x ?? 0) * sp, sy = (f.slide?.y ?? 0) * sp;
+            const ofx = prevImg.naturalWidth / C.w, ofy = prevImg.naturalHeight / C.h;
+            // Widen the culled region by the slide so the moving edge isn't clipped.
+            const pad = Math.max(Math.abs(sx), Math.abs(sy));
+            const qx0 = Math.max(C.x, x0 - pad), qy0 = Math.max(C.y, y0 - pad);
+            const qx1 = Math.min(C.x + C.w, x1 + pad), qy1 = Math.min(C.y + C.h, y1 + pad);
+            ctx.save();
+            ctx.translate(sx, sy);
+            ctx.drawImage(prevImg, (qx0 - C.x) * ofx, (qy0 - C.y) * ofy, (qx1 - qx0) * ofx, (qy1 - qy0) * ofy, qx0, qy0, qx1 - qx0, qy1 - qy0);
+            ctx.restore();
+            ctx.globalAlpha = 1;
+          }
         }
       }
     }

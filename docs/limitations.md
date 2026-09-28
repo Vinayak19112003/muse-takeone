@@ -42,12 +42,26 @@ animation into a still and make crossfades look like glitches. Popovers,
 toasts, and transient banners that appear between captures won't be in the
 video.
 
-## Scroll is a marker, not a scroll
+## Scroll is reconstructed, not recorded footage
 
-A `scroll` action fires a timeline marker; the *screenshots* carry the visual
-change, and the cut between them slides. There is no continuous scrolling
-footage — if you need smooth scrolling through a long page, capture more
-intermediate states.
+A `scroll` action declares `dx`/`dy`/`durationMs`; the *screenshots* carry the
+visual change. The cut between them is reconstructed as a true scroll: both
+screenshots translate with ease-in-out over the scroll's own `durationMs`, so
+overlapping page content stays aligned and reads as one continuous page moving.
+There is no continuous scrolling footage — if the screenshots are far apart or
+the page repainted between captures, intermediate content is not invented. For
+very long scrolls, capture more intermediate states.
+
+### Sticky / fixed elements during scrolls
+
+Scroll reconstruction translates the whole frame. Pages with sticky or fixed
+elements (e.g. a pinned site header) will show that element sliding with the
+page during the scroll transition instead of staying pinned — briefly, it may
+appear twice (once on each screenshot) mid-transition. Detecting stationary
+regions automatically requires pixel-level screenshot analysis with tolerance
+for translucent or dynamic headers; that is not implemented. If a pinned
+header dominates the visual, prefer smaller scroll steps between captures so
+the artifact is brief.
 
 ## Web content only
 

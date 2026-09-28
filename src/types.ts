@@ -310,8 +310,15 @@ export interface FrameIndexEntry {
    * recordings). Default "crossfade". "cut" is instant; a slide moves the old
    * screenshot by (dx, dy) source px while the new one fades in — used for
    * scrolls so the direction of movement reads on screen.
+   *
+   * When `durationMs` is present, the transition is a true scroll: it lasts
+   * `durationMs` (not the generic transition duration), BOTH screenshots
+   * translate so overlapping content stays aligned (old moves by (dx, dy),
+   * new enters from -(dx, dy)), and no crossfade is applied. This is how
+   * scroll actions are reconstructed; plain `{kind:"slide",dx,dy}` without
+   * `durationMs` keeps the legacy crossfade nudge for backwards compatibility.
    */
-  transitionIn?: "crossfade" | "cut" | { kind: "slide"; dx: number; dy: number };
+  transitionIn?: "crossfade" | "cut" | { kind: "slide"; dx: number; dy: number; durationMs?: number };
 }
 
 /**

@@ -53,6 +53,13 @@ export interface FrameInstruction {
    * the direction of movement reads on screen. Undefined for plain crossfades.
    */
   slide?: { x: number; y: number };
+  /**
+   * True when this frame is inside a true scroll transition (a slide carrying
+   * durationMs): both screenshots translate so overlapping content stays aligned,
+   * over the scroll's own duration, with no crossfade. The renderer uses this to
+   * pick the scroll drawing path instead of the crossfade-slide path.
+   */
+  isScroll?: boolean;
 }
 
 export interface ClickDown {
@@ -106,7 +113,11 @@ export function planFrameInstructions(input: InstructionPlanInput): FrameInstruc
   let transitionFrom: string | undefined;
   // Slide vector for the active transition, in composition px at mix = 1.
   let activeSlide: { x: number; y: number } | undefined;
+  // True when the active transition is a true scroll (slide with durationMs).
+  let activeIsScroll = false;
   // Per-cut transition duration in output ms; "cut" transitions use 0 (instant).
+  // Scroll transitions use the scroll action's own durationMs, not the generic
+  // transition duration, so the visible scroll plays in real time.
   let activeTransitionMs = transitionMs;
   let followOffset: Point = { x: 0, y: 0 };
   const k = 1 - Math.pow(0.001, 1 / fps / 0.35); // ~350ms time constant for follow easing
@@ -121,7 +132,15 @@ export function planFrameInstructions(input: InstructionPlanInput): FrameInstruc
       cutOutT = tOut;
       prevFi = fi;
       const ti = frames[fi].transitionIn;
-      activeTransitionMs = ti === "cut" ? 0 : transitionMs;
+      const slideDurationMs =
+        ti !== undefined && ti !== null && typeof ti === "object" && ti.kind === "slide" &&
+        typeof ti.durationMs === "number" && ti.durationMs > 0
+          ? ti.durationMs
+          : undefined;
+      // Scroll transitions play over the scroll action's own durationMs, not the
+      // generic transition duration, so the visible scroll plays in real time.
+      activeTransitionMs = ti === "cut" ? 0 : slideDurationMs ?? transitionMs;
+      activeIsScroll = slideDurationMs !== undefined;
       activeSlide =
         ti !== undefined && ti !== null && typeof ti === "object" && ti.kind === "slide"
           ? { x: ti.dx * uiScale, y: ti.dy * uiScale }
@@ -129,7 +148,7 @@ export function planFrameInstructions(input: InstructionPlanInput): FrameInstruc
     }
     const mixAge = tOut - cutOutT;
     const mix = transitionFrom !== undefined && mixAge < activeTransitionMs ? mixAge / activeTransitionMs : null;
-    if (mix === null) { transitionFrom = undefined; activeSlide = undefined; }
+    if (mix === null) { transitionFrom = undefined; activeSlide = undefined; activeIsScroll = false; }
     const cam = camAtOut(tOut);
     const s = cam.scale;
     const cur = toComp(cursorAt(samples, tSrc));
@@ -168,6 +187,7 @@ export function planFrameInstructions(input: InstructionPlanInput): FrameInstruc
       caption: captionAt(captions, tSrc),
       mix,
       slide: activeSlide,
+      isScroll: mix !== null && activeIsScroll ? true : undefined,
     });
   }
   return instructions;
