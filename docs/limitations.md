@@ -78,9 +78,13 @@ unaffected.
 
 ## Audio
 
-TraceReel renders native audio: per-state narration (TTS), background music
-with ducking under narration, and final loudness mastering, all muxed into
-the output MP4. See AUDIO.md for the full documentation.
+TraceReel supports native audio post-production: agent-supplied per-state
+narration clips, optional background music, timing, mixing, ducking,
+loudness mastering, subtitles, and final AAC muxing.
+
+TraceReel does not include a TTS or music-generation engine. Agents or users
+provide the finished narration/music files; TraceReel handles the production
+pipeline. See AUDIO.md for full documentation.
 
 ## Performance
 
