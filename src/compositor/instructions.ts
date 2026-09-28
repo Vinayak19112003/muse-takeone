@@ -13,6 +13,7 @@
  * trimming and time-lapse.
  */
 import type { FrameIndexEntry, Point, ScenarioConfig } from "../types.js";
+import type { ScrollPlan } from "./scrollplan.js";
 import { clamp, lerp } from "../motion.js";
 import {
   crossesCut,
@@ -63,6 +64,13 @@ export interface FrameInstruction {
    * pick the scroll drawing path instead of the crossfade-slide path.
    */
   isScroll?: boolean;
+  /**
+   * Precomputed deterministic scroll-compositing plan (document displacement,
+   * fixed/sticky regions, scrollbar). Attached by render.ts for timed scrolls
+   * so parallel workers stay stateless: the plan is computed once per unique
+   * screenshot pair and serialized with the instruction.
+   */
+  scrollPlan?: ScrollPlan;
 }
 
 export interface ClickDown {
