@@ -65,6 +65,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
+    "prebuild": "npm run scrollplan:inline",
+    "scrollplan:inline": "node scripts/inline-scrollplan.mjs",
     "prepublishOnly": "npm run build",
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",

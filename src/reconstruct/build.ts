@@ -116,7 +116,7 @@ export type ReconstructionAction =
 export type ReconstructionTransitionIn =
   | "crossfade"
   | "cut"
-  | { kind: "slide"; dx: number; dy: number };
+  | { kind: "slide"; dx: number; dy: number; durationMs?: number };
 
 /** One screenshot and the actions performed while it is (mostly) on screen. */
 export interface ReconstructionFrame {
@@ -134,8 +134,10 @@ export interface ReconstructionFrame {
   /**
    * How the video arrives at THIS frame. Default "crossfade". "cut" is instant.
    * A slide moves the old screenshot while the new one fades in (used for scrolls).
-   * When unset and the previous frame's last action was a scroll, a slide in the
-   * scroll direction is used automatically.
+   * When unset and the previous frame's last action was a scroll, a true scroll
+   * transition is used automatically: both screenshots translate over the scroll's
+   * own durationMs with no crossfade. An explicit slide may carry durationMs for
+   * the same true-scroll rendering; without it the legacy crossfade nudge applies.
    */
   transitionIn?: ReconstructionTransitionIn;
   /** Regions to redact (blur/solid/pixelate) in this frame before rendering. */
@@ -277,6 +279,8 @@ interface SynthesizedAction {
   /** Scroll deltas, for the automatic slide transition. */
   scrollDx?: number;
   scrollDy?: number;
+  /** Declared scroll duration, preserved so the visual scroll can play in real time. */
+  scrollDurationMs?: number;
 }
 
 /**
@@ -335,11 +339,12 @@ function synthesizeFrameEvents(
       done.push({ kind: "type", eventEnd, nextFrameAfterMs: a.nextFrameAfterMs ?? NEXT_FRAME_AFTER.type });
     } else if (a.kind === "scroll") {
       const dx = a.dx ?? 0, dy = a.dy ?? 700;
-      t += a.durationMs ?? 600; // the scroll beat; the next frame shows the result
+      const durationMs = a.durationMs ?? 600;
+      t += durationMs; // the scroll beat; the next frame shows the result
       events.push({ type: "scroll", t, dx, dy });
       const eventEnd = t;
       t = eventEnd + (a.pauseMs ?? 500);
-      done.push({ kind: "scroll", eventEnd, nextFrameAfterMs: a.nextFrameAfterMs ?? NEXT_FRAME_AFTER.scroll, scrollDx: dx, scrollDy: dy });
+      done.push({ kind: "scroll", eventEnd, nextFrameAfterMs: a.nextFrameAfterMs ?? NEXT_FRAME_AFTER.scroll, scrollDx: dx, scrollDy: dy, scrollDurationMs: durationMs });
     } else {
       // hover: glide there, dwell, and leave a marker so the camera planner frames it.
       // Never a click: no mousedown/mouseup, no ripple.
@@ -373,16 +378,17 @@ export function buildReconstructionManifest(
   input.frames.forEach((frame, fi) => {
     const isLast = fi === input.frames.length - 1;
     // How we arrive at this frame. A scroll at the end of the previous frame
-    // automatically becomes a directional slide so the movement reads on screen.
+    // becomes a true scroll transition: the visual scroll plays over the scroll's
+    // own durationMs with both screenshots translating, so overlapping page
+    // content stays aligned and reads as one continuous page moving.
+    // Content moves opposite the scroll gesture: scrolling down pushes the old
+    // screenshot up while the new one enters from below.
     let transitionIn: FrameIndexEntry["transitionIn"] = frame.transitionIn;
     if (transitionIn === undefined && prevLastAction?.kind === "scroll") {
-      const k = 0.35;
-      const maxDx = vw * 0.3, maxDy = vh * 0.3;
-      const dx = Math.max(-maxDx, Math.min(maxDx, (prevLastAction.scrollDx ?? 0) * k));
-      const dy = Math.max(-maxDy, Math.min(maxDy, (prevLastAction.scrollDy ?? 0) * k));
-      // Content moves opposite the scroll gesture: scrolling down pushes the old
-      // screenshot up while the new one fades in.
-      if (dx !== 0 || dy !== 0) transitionIn = { kind: "slide", dx: -dx, dy: -dy };
+      const dx = prevLastAction.scrollDx ?? 0;
+      const dy = prevLastAction.scrollDy ?? 0;
+      const durationMs = prevLastAction.scrollDurationMs;
+      if (dx !== 0 || dy !== 0) transitionIn = { kind: "slide", dx: -dx, dy: -dy, durationMs };
     }
     frames.push({ t: Math.round(t), file: basename(frame.file), transitionIn });
     // Seed one cursor sample at the cut so a worker starting mid-video has a position.

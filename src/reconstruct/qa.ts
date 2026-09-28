@@ -179,6 +179,52 @@ export function qaReconstruction(input: ReconstructionInput, manifest: Recording
     }
   });
 
+  // Scroll visual continuity: a scroll action declares durationMs, and the visual
+  // scroll into the next frame should play over approximately that long. These
+  // are objective, measurable checks — no quality scores.
+  const fps = cfg.output.fps > 0 ? cfg.output.fps : 60;
+  const frameMs = 1000 / fps;
+  input.frames.forEach((f, fi) => {
+    if (fi >= frames.length - 1) return;
+    const actions = f.actions ?? [];
+    const last = actions[actions.length - 1];
+    if (!last || last.kind !== "scroll") return;
+    const sdx = last.dx ?? 0, sdy = last.dy ?? 700;
+    const dist = Math.hypot(sdx, sdy);
+    if (dist === 0) return;
+    const declaredMs = last.durationMs ?? 600;
+    const nextTi = frames[fi + 1]?.transitionIn as unknown;
+    const isSlide = typeof nextTi === "object" && nextTi !== null &&
+      (nextTi as Record<string, unknown>).kind === "slide";
+    const slideMs = isSlide ? (nextTi as Record<string, unknown>).durationMs : undefined;
+    // The visual scroll duration: a timed slide plays over its own durationMs,
+    // a legacy slide (or crossfade) over the generic transition duration.
+    const visualMs = isSlide && typeof slideMs === "number" && slideMs > 0
+      ? slideMs
+      : cfg.transition.duration;
+    if (visualMs < declaredMs * 0.9) {
+      warn("timing",
+        `SCROLL_VISUAL_TOO_SHORT: frame "${f.file}" declares a ${declaredMs}ms scroll ` +
+          `of ${Math.round(dist)}px, but the visual transition lasts only ${Math.round(visualMs)}ms; ` +
+          `the scroll will read as a jump. Give the slide a durationMs matching the scroll.`,
+      );
+    }
+    if (visualMs < 2 * frameMs) {
+      warn("timing",
+        `SCROLL_DISCONTINUITY: frame "${f.file}" scroll transition lasts ${visualMs.toFixed(1)}ms ` +
+          `(< 2 frames at ${fps}fps); the scroll happens within a single frame. Lengthen durationMs.`,
+      );
+    }
+    const perFramePx = dist / Math.max(1, visualMs / frameMs);
+    if (perFramePx > 100) {
+      warn("timing",
+        `SCROLL_LARGE_FRAME_JUMP: frame "${f.file}" scrolls ${Math.round(dist)}px in ` +
+          `${Math.round(visualMs)}ms (${perFramePx.toFixed(0)}px per frame at ${fps}fps); ` +
+          `a single frame moves the whole distance. Reduce the distance or lengthen the duration.`,
+      );
+    }
+  });
+
   // Missing final state: the last thing the viewer sees is an action whose
   // result never appears (validate flags this too; QA repeats it post-build
   // because it is the single most common broken-demo shape).

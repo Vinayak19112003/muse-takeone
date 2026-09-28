@@ -9,7 +9,8 @@ import { spawnFfmpeg, runFfmpeg } from "../ffmpeg.js";
 import { clamp } from "../motion.js";
 import { compositorHtml } from "./page.js";
 import { buildTimeline, cameraBusyWindows, outToSource, sourceToOutput, rateAtSource, planCamera, makeCameraEvaluator, extractCursor, planKeyToasts, type CameraKeyframe, type CameraState, type KeptRange } from "./plan.js";
-import { planFrameInstructions } from "./instructions.js";
+import { planFrameInstructions, type FrameInstruction } from "./instructions.js";
+import type { ScrollPlan } from "./scrollplan.js";
 import { planReconstructionCamera } from "../reconstruct/shots.js";
 
 export interface RenderOptions {
@@ -151,6 +152,12 @@ export async function renderRecording(opts: RenderOptions): Promise<RenderResult
     transitionMs: cfg.transition.duration,
   });
 
+  // ---- Scroll-compositing pre-pass: analyze each unique timed scroll once ----
+  // Measures the true document displacement and partitions the frame into
+  // document/fixed/sticky regions + scrollbar, so parallel workers can render
+  // the layer compositing statelessly from the serialized plan.
+  await analyzeScrollPlans(dir, instructions, cfg, log);
+
   // ---- Render in parallel workers, each encoding its own segment ----
   const workers = clamp(cfg.output.workers ?? Math.min(6, cpus().length - 2), 1, 16);
   const perWorker = Math.ceil(totalFrames / workers);
@@ -260,4 +267,81 @@ async function openCompositorPage(browser: Browser, dir: string, setup: Record<s
   await page.evaluate((d) => (window as any).__setBackground(d), "data:image/png;base64," + shot.data);
   await page.evaluate(() => (window as any).__showCanvas(true));
   return page;
+}
+
+/**
+ * Scroll-compositing pre-pass. For each unique timed scroll (previousFile ->
+ * file), runs the deterministic pixel analysis once in a headless page and
+ * attaches the resulting ScrollPlan to every instruction of that scroll.
+ * Workers stay stateless: they just execute the serialized plan.
+ */
+async function analyzeScrollPlans(
+  dir: string,
+  instructions: FrameInstruction[],
+  cfg: ScenarioConfig,
+  log: (msg: string) => void,
+): Promise<void> {
+  const scrolls = new Map<string, { aFile: string; bFile: string; dx: number; dy: number }>();
+  for (const ins of instructions) {
+    if (ins.isScroll && ins.previousFile && ins.mix != null && ins.mix < 1) {
+      const key = `${ins.previousFile}>${ins.file}`;
+      if (!scrolls.has(key)) {
+        // ins.slide is in base-uiScale pixels; ins.uiScale includes the
+        // camera sqrt(scale) factor. Divide it out to get viewport pixels.
+        const baseUiScale = ins.uiScale / Math.sqrt(ins.cam.scale);
+        scrolls.set(key, {
+          aFile: ins.previousFile,
+          bFile: ins.file,
+          dx: (ins.slide?.x ?? 0) / baseUiScale,
+          dy: (ins.slide?.y ?? 0) / baseUiScale,
+        });
+      }
+    }
+  }
+  if (!scrolls.size) return;
+  log(`Analyzing ${scrolls.size} scroll transition(s) for layer compositing...`);
+  const browser = await chromium.launch({
+    headless: true,
+    executablePath: resolveExecutablePath(cfg.browser),
+    args: ["--hide-scrollbars"],
+  });
+  try {
+    const framesDir = join(dir, "frames");
+    const page = await browser.newPage();
+    await page.route("**/*", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname.startsWith("/frames/")) {
+        const file = join(framesDir, url.pathname.slice("/frames/".length));
+        return route.fulfill({
+          body: readFileSync(file),
+          contentType: file.endsWith(".png") ? "image/png" : "image/jpeg",
+        });
+      }
+      if (url.pathname === "/") return route.fulfill({ body: compositorHtml, contentType: "text/html" });
+      return route.abort();
+    });
+    await page.goto("http://takeone.local/");
+    const plans = new Map<string, ScrollPlan>();
+    for (const [key, s] of scrolls) {
+      const plan = (await page.evaluate(
+        ({ aFile, bFile, dx, dy }) => (window as any).__analyzeScroll(aFile, bFile, dx, dy),
+        s,
+      )) as ScrollPlan;
+      plans.set(key, plan);
+      for (const w of plan.warnings ?? []) log(`scroll ${s.aFile}>${s.bFile}: ${w}`);
+      log(
+        `scroll ${s.aFile}>${s.bFile}: measured=(${plan.mx},${plan.my}) ` +
+        `declared=(${s.dx.toFixed(1)},${s.dy.toFixed(1)}) conf=${(plan.confidence ?? 0).toFixed(2)}` +
+        (plan.useMeasured ? "" : " (using declared)"),
+      );
+    }
+    for (const ins of instructions) {
+      if (ins.isScroll && ins.previousFile) {
+        const plan = plans.get(`${ins.previousFile}>${ins.file}`);
+        if (plan) ins.scrollPlan = plan;
+      }
+    }
+  } finally {
+    await browser.close();
+  }
 }

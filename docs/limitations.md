@@ -1,6 +1,6 @@
 # Limitations
 
-Honest boundaries of what tracereel v0.1.0 can and cannot do.
+Honest boundaries of what TraceReel can and cannot do.
 
 ## Reconstruction is not a recording
 
@@ -42,12 +42,32 @@ animation into a still and make crossfades look like glitches. Popovers,
 toasts, and transient banners that appear between captures won't be in the
 video.
 
-## Scroll is a marker, not a scroll
+## Scroll is reconstructed, not recorded footage
 
-A `scroll` action fires a timeline marker; the *screenshots* carry the visual
-change, and the cut between them slides. There is no continuous scrolling
-footage — if you need smooth scrolling through a long page, capture more
-intermediate states.
+A `scroll` action declares `dx`/`dy`/`durationMs`; the *screenshots* carry the
+visual change. Before rendering, the compositor analyzes each scroll's
+screenshot pair: it measures the true document displacement via template
+matching (the declared `dy` is only a prior), partitions the frame into
+document, sticky, and fixed regions, and detects the scrollbar gutter.
+
+The scroll is then rendered as a moving document layer plus a fixed viewport
+layer: the pre-scroll document translates by the measured offset, the
+newly-revealed strip comes from the post-scroll screenshot, fixed regions
+crossfade without translating, sticky regions move by their own measured
+offset, and the scrollbar stays viewport-fixed with an interpolated thumb.
+Low-confidence analysis falls back safely to pure document motion with a QA
+warning. There is no continuous scrolling footage — if the screenshots are
+far apart or the page repainted between captures, intermediate content is not
+invented. For very long scrolls, capture more intermediate states.
+
+### Sticky / fixed elements during scrolls
+
+Region classification is intentionally conservative. Repetitive page content
+can confuse displacement matching, and complex translucent or dynamic fixed
+UI (animated headers, video overlays) may not classify perfectly. Screenshots
+with major DOM or layout changes between captures (not just scrolling) may
+fall back or show brief artifacts. If a pinned header dominates the visual,
+prefer smaller scroll steps between captures.
 
 ## Web content only
 
@@ -56,10 +76,15 @@ scenes render as whatever the screenshot shows — a still. Pages that repaint
 faster than the render samples may look frozen; cursor and camera are
 unaffected.
 
-## No audio
+## Audio
 
-The output is silent MP4/WebM. Narration, music, and sound effects are outside
-the tool — mux them in with ffmpeg afterwards.
+TraceReel supports native audio post-production: agent-supplied per-state
+narration clips, optional background music, timing, mixing, ducking,
+loudness mastering, subtitles, and final AAC muxing.
+
+TraceReel does not include a TTS or music-generation engine. Agents or users
+provide the finished narration/music files; TraceReel handles the production
+pipeline. See AUDIO.md for full documentation.
 
 ## Performance
 
@@ -71,4 +96,4 @@ short takes.
 ## Platform
 
 Developed and tested on Linux (Node 20+). macOS/Windows should work (Node +
-Chromium + ffmpeg are portable) but are not verified for v0.1.0.
+Chromium + ffmpeg are portable) but are less verified.

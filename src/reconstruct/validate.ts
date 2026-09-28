@@ -290,11 +290,13 @@ export function validateReconstructionInput(input: unknown, baseDir: string): Va
       if (st.caption !== undefined && typeof st.caption !== "string") err("INVALID_STATE", `${where}.caption must be a string`, { path: `${where}.caption` });
       const ti = st.transitionIn as unknown;
       if (ti !== undefined) {
+        const tir = ti as Record<string, unknown>;
         const okTransition =
           ti === "crossfade" || ti === "cut" ||
-          (typeof ti === "object" && ti !== null && (ti as Record<string, unknown>).kind === "slide" &&
-            isNum((ti as Record<string, unknown>).dx) && isNum((ti as Record<string, unknown>).dy));
-        if (!okTransition) err("INVALID_TRANSITION", `${where}.transitionIn must be "crossfade", "cut", or { kind: "slide", dx, dy }`, { path: `${where}.transitionIn` });
+          (typeof ti === "object" && ti !== null && tir.kind === "slide" &&
+            isNum(tir.dx) && isNum(tir.dy) &&
+            (tir.durationMs === undefined || (isNum(tir.durationMs) && tir.durationMs >= 0)));
+        if (!okTransition) err("INVALID_TRANSITION", `${where}.transitionIn must be "crossfade", "cut", or { kind: "slide", dx, dy, durationMs? }`, { path: `${where}.transitionIn` });
         if (si === 0) warn("IGNORED_TRANSITION", `${where}.transitionIn has no effect on the first state (nothing to transition from)`, { path: `${where}.transitionIn` });
       }
       checkRedactions(st.redactions, where);
@@ -380,11 +382,13 @@ export function validateReconstructionInput(input: unknown, baseDir: string): Va
       if (fr.caption !== undefined && typeof fr.caption !== "string") err("INVALID_FRAME", `${where}.caption must be a string`, { path: `${where}.caption` });
       const ti = fr.transitionIn as unknown;
       if (ti !== undefined) {
+        const tir = ti as Record<string, unknown>;
         const okTransition =
           ti === "crossfade" || ti === "cut" ||
-          (typeof ti === "object" && ti !== null && (ti as Record<string, unknown>).kind === "slide" &&
-            isNum((ti as Record<string, unknown>).dx) && isNum((ti as Record<string, unknown>).dy));
-        if (!okTransition) err("INVALID_TRANSITION", `${where}.transitionIn must be "crossfade", "cut", or { kind: "slide", dx, dy }`, { path: `${where}.transitionIn` });
+          (typeof ti === "object" && ti !== null && tir.kind === "slide" &&
+            isNum(tir.dx) && isNum(tir.dy) &&
+            (tir.durationMs === undefined || (isNum(tir.durationMs) && tir.durationMs >= 0)));
+        if (!okTransition) err("INVALID_TRANSITION", `${where}.transitionIn must be "crossfade", "cut", or { kind: "slide", dx, dy, durationMs? }`, { path: `${where}.transitionIn` });
         if (fi === 0) warn("IGNORED_TRANSITION", `${where}.transitionIn has no effect on the first frame (nothing to transition from)`, { path: `${where}.transitionIn` });
       }
       checkRedactions(fr.redactions, where);

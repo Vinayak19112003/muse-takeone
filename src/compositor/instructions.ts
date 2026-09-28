@@ -13,6 +13,7 @@
  * trimming and time-lapse.
  */
 import type { FrameIndexEntry, Point, ScenarioConfig } from "../types.js";
+import type { ScrollPlan } from "./scrollplan.js";
 import { clamp, lerp } from "../motion.js";
 import {
   crossesCut,
@@ -20,6 +21,7 @@ import {
   frameIndexAt,
   keyHudAt,
   outToSource,
+  sourceToOutput,
   type CameraState,
   type CursorSample,
   type KeptRange,
@@ -53,6 +55,22 @@ export interface FrameInstruction {
    * the direction of movement reads on screen. Undefined for plain crossfades.
    */
   slide?: { x: number; y: number };
+  /**
+   * True when this frame is inside a true scroll transition (a slide carrying
+   * durationMs): both screenshots translate so overlapping content stays aligned,
+   * over the scroll's own duration, with no crossfade. Timed scrolls render in
+   * the pre-cut window [nextFrameStart - durationMs, nextFrameStart], so a D-ms
+   * scroll occupies ~D ms of visual time, not 2D. The renderer uses this to
+   * pick the scroll drawing path instead of the crossfade-slide path.
+   */
+  isScroll?: boolean;
+  /**
+   * Precomputed deterministic scroll-compositing plan (document displacement,
+   * fixed/sticky regions, scrollbar). Attached by render.ts for timed scrolls
+   * so parallel workers stay stateless: the plan is computed once per unique
+   * screenshot pair and serialized with the instruction.
+   */
+  scrollPlan?: ScrollPlan;
 }
 
 export interface ClickDown {
@@ -83,6 +101,19 @@ export interface InstructionPlanInput {
   transitionMs: number;
 }
 
+/**
+ * Duration of a timed scroll transition, or undefined. A slide carrying a
+ * positive durationMs is a true scroll: it renders in the pre-cut window
+ * [nextFrameStart - durationMs, nextFrameStart], not after the cut.
+ */
+function timedScrollDurationMs(ti: FrameIndexEntry["transitionIn"]): number | undefined {
+  if (ti !== undefined && ti !== null && typeof ti === "object" && ti.kind === "slide" &&
+      typeof ti.durationMs === "number" && ti.durationMs > 0) {
+    return ti.durationMs;
+  }
+  return undefined;
+}
+
 /** Active narrative caption at source time t, or null. */
 function captionAt(captions: { start: number; end: number; text: string }[] | undefined, t: number): string | null {
   if (!captions) return null;
@@ -107,6 +138,8 @@ export function planFrameInstructions(input: InstructionPlanInput): FrameInstruc
   // Slide vector for the active transition, in composition px at mix = 1.
   let activeSlide: { x: number; y: number } | undefined;
   // Per-cut transition duration in output ms; "cut" transitions use 0 (instant).
+  // Timed scrolls render in the pre-cut window, so they use 0 post-cut duration.
+  // Untimed slides and crossfades use the generic transition duration.
   let activeTransitionMs = transitionMs;
   let followOffset: Point = { x: 0, y: 0 };
   const k = 1 - Math.pow(0.001, 1 / fps / 0.35); // ~350ms time constant for follow easing
@@ -114,22 +147,56 @@ export function planFrameInstructions(input: InstructionPlanInput): FrameInstruc
     const tOut = (i * 1000) / fps;
     const tSrc = outToSource(ranges, tOut);
     const fi = frameIndexAt(frames, tSrc);
+    // Pre-cut timed scroll: if the NEXT frame carries a slide with durationMs,
+    // the visual scroll renders in [nextFrameStart - durationMs, nextFrameStart],
+    // not after the cut. This keeps a D-ms scroll to ~D ms of visual time instead
+    // of paying the duration twice (once as the action beat, once as the animation).
+    let preCutScroll: { progress: number; slide: { x: number; y: number }; nextFile: string } | null = null;
+    if (fi + 1 < frames.length) {
+      const nextDurationMs = timedScrollDurationMs(frames[fi + 1].transitionIn);
+      if (nextDurationMs !== undefined) {
+        const tNextOut = sourceToOutput(ranges, frames[fi + 1].t);
+        const windowStart = tNextOut - nextDurationMs;
+        if (tOut >= windowStart && tOut < tNextOut) {
+          const ti = frames[fi + 1].transitionIn;
+          preCutScroll = {
+            progress: (tOut - windowStart) / nextDurationMs,
+            slide: {
+              x: (ti as { dx: number }).dx * uiScale,
+              y: (ti as { dy: number }).dy * uiScale,
+            },
+            nextFile: frames[fi + 1].file,
+          };
+        }
+      }
+    }
     // A screenshot cut starts a crossfade measured in output time. transitionFrom names the
     // outgoing screenshot explicitly so parallel workers stay deterministic.
+    // Timed scrolls are excluded: their transition already ran in the pre-cut window,
+    // so the cut lands on a settled frame with no post-cut animation.
     if (fi !== prevFi) {
       transitionFrom = prevFi >= 0 ? frames[prevFi].file : undefined;
       cutOutT = tOut;
       prevFi = fi;
       const ti = frames[fi].transitionIn;
-      activeTransitionMs = ti === "cut" ? 0 : transitionMs;
+      const slideDurationMs = timedScrollDurationMs(ti);
+      // Timed scrolls use 0 post-cut duration: the scroll already played pre-cut.
+      // Untimed slides and crossfades keep the generic transition duration.
+      activeTransitionMs = ti === "cut" ? 0 : slideDurationMs !== undefined ? 0 : transitionMs;
       activeSlide =
-        ti !== undefined && ti !== null && typeof ti === "object" && ti.kind === "slide"
+        ti !== undefined && ti !== null && typeof ti === "object" && ti.kind === "slide" && slideDurationMs === undefined
           ? { x: ti.dx * uiScale, y: ti.dy * uiScale }
           : undefined;
     }
     const mixAge = tOut - cutOutT;
     const mix = transitionFrom !== undefined && mixAge < activeTransitionMs ? mixAge / activeTransitionMs : null;
     if (mix === null) { transitionFrom = undefined; activeSlide = undefined; }
+    // Pre-cut scroll overrides the file/mix/slide for the transition window.
+    const effFile = preCutScroll !== null ? preCutScroll.nextFile : frames[fi].file;
+    const effPreviousFile = preCutScroll !== null ? frames[fi].file : (mix !== null ? transitionFrom : undefined);
+    const effMix = preCutScroll !== null ? preCutScroll.progress : mix;
+    const effSlide = preCutScroll !== null ? preCutScroll.slide : activeSlide;
+    const effIsScroll = preCutScroll !== null ? true : undefined;
     const cam = camAtOut(tOut);
     const s = cam.scale;
     const cur = toComp(cursorAt(samples, tSrc));
@@ -158,16 +225,17 @@ export function planFrameInstructions(input: InstructionPlanInput): FrameInstruc
       ? downs.filter((d) => tSrc >= d.t && tSrc - d.t < 450).map((d) => ({ ...toOut(toComp(d)), p: (tSrc - d.t) / 450 }))
       : [];
     instructions.push({
-      file: frames[fi].file,
-      previousFile: mix !== null ? transitionFrom : undefined,
+      file: effFile,
+      previousFile: effPreviousFile,
       cam: { px, py, scale: s },
       cursor: cfg.cursor.enabled ? { ...toOut(cur), pressed, visible: samples.length > 0 } : null,
       ripples,
       uiScale: uiScale * Math.sqrt(s),
       hud: keyHudAt(keyToasts, tSrc),
       caption: captionAt(captions, tSrc),
-      mix,
-      slide: activeSlide,
+      mix: effMix,
+      slide: effSlide,
+      isScroll: effIsScroll,
     });
   }
   return instructions;

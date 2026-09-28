@@ -22,6 +22,12 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      # Verify generated scrollplan.inline.ts is in sync with scrollplan.ts.
+      # The prebuild hook regenerates it, but CI must fail if a developer
+      # changed scrollplan.ts without committing the regenerated output.
+      - run: |
+          npm run scrollplan:inline
+          git diff --exit-code src/compositor/scrollplan.inline.ts || (echo "ERROR: src/compositor/scrollplan.inline.ts is stale. Run 'npm run scrollplan:inline' and commit the result." && exit 1)
       - run: npm run build
       # Smoke render: the smallest visual fixture at 640x360@15fps through the
       # real compositor Chromium. Catches render-pipeline breakage (compositor,
