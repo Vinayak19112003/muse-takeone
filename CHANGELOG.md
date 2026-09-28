@@ -4,6 +4,43 @@ All notable changes to TraceReel (formerly muse-takeone). Format follows [Keep a
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-28
+
+### Added — native agent-audio pipeline
+
+- `tracereel audio`: mix agent-supplied narration and background music onto
+  a reconstructed video, producing a final narrated MP4.
+- Agent-provided narration clips (`audio.narration[]`): per-clip file,
+  scene/state-anchored start times, gain, fades. TraceReel places them on
+  the timeline — it does not generate speech.
+- State/scene synchronization: narration is anchored to trace states, so
+  voice-over follows the visual timeline exactly.
+- Background music (`audio.music`): looping bed with configurable level.
+- Optional ducking: music dips under narration (sidechain-style volume
+  automation in the mix graph).
+- Subtitle export: SRT and VTT generated from narration clips.
+- AAC output: 48 kHz stereo AAC; video stream is never re-encoded
+  (`-c:v copy`), decoded frame hashes verified identical after muxing.
+- Audio QA: integrated LUFS, true peak (dBTP), narration onsets, clipping
+  check, normalization status — reported after every mix.
+- Final loudness mastering: deterministic two-pass FFmpeg `loudnorm`
+  (`linear=true`) after mixing and ducking. Default −16 LUFS integrated /
+  −1.5 dBTP max true peak; configurable via trace `audio.loudness` or CLI
+  `--loudness-target` / `--loudness-peak` / `--no-loudness`.
+- True-peak protection: 0.5 dB codec headroom reserved in the filter target
+  because AAC encoding overshoots PCM true peak; the final encoded file
+  respects the configured ceiling.
+- Docs: `docs/AUDIO.md`.
+
+**No built-in TTS provider.** TraceReel has no text-to-speech. The agent
+generates voice with its own TTS (Muse uses its own voice pipeline) and
+supplies audio files; TraceReel receives the clips and produces the final
+audio/video. Validated end-to-end with real Muse-generated narration:
+−27.02 LUFS / −8.5 dBTP in → −16.34 LUFS / −1.92 dBTP out, onsets and
+frames unchanged.
+
+## [0.2.0] — 2026-09-27
+
 TraceReel is the agent-neutral evolution of muse-takeone: any supported AI
 browser agent's trace becomes a polished demo video. Muse is the
 tested/reference adapter; Grokbot is planned.

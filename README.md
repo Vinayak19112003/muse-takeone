@@ -49,6 +49,41 @@ tracereel reconstruct trace.json -o demo.mp4
 tracereel audio demo.mp4 --trace trace.json -o demo-narrated.mp4 --subtitles both
 ```
 
+## Narrated videos
+
+```
+Agent browser trace
+  → agent narration (the agent writes the script AND generates the voice clips with its own TTS)
+  → TraceReel visual reconstruction (silent MP4)
+  → TraceReel audio mix (narration placed on scenes, music, ducking, loudness mastering)
+  → final narrated MP4
+```
+
+TraceReel has no built-in TTS: the agent generates voice clips with its own
+text-to-speech and lists them in the trace; TraceReel receives the clips and
+produces the final audio/video. Minimal example:
+
+```json
+{
+  "audio": {
+    "narration": [
+      { "file": "voice/intro.mp3", "startMs": 0 },
+      { "file": "voice/click.mp3", "startMs": 2500 }
+    ],
+    "music": { "file": "music/bed.mp3", "levelDb": -18 },
+    "ducking": { "enabled": true }
+  }
+}
+```
+
+```bash
+tracereel audio demo.mp4 --trace trace.json -o demo-narrated.mp4 --subtitles both
+```
+
+Output is AAC 48 kHz stereo at −16 LUFS / −1.5 dBTP (configurable), with the
+video stream copied untouched (`-c:v copy`). Full reference:
+[`docs/AUDIO.md`](docs/AUDIO.md).
+
 A trace is states and actions, not frames and hacks:
 
 ```json
