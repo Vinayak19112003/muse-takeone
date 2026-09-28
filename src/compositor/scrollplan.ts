@@ -569,15 +569,36 @@ export function planScrollDraws(plan: ScrollPlan, sp: number, W?: number, H?: nu
 
   // 1. Moving document from A (full coverage, no gaps), then fixed/sticky
   //    overlays. The document layer is A[docTop:h-docBottom] translated by
-  //    (mx*sp, my*sp). Fixed/sticky bands are drawn on top.
+  //    (mx*sp, my*sp), with fixed/sticky bands masked out (they are drawn by
+  //    their own layers; leaving them in would bleed through translucent
+  //    fixed crossfades). Fixed/sticky bands are drawn on top.
   for (const c of plan.cols) {
     if (c.kind === "fixed") {
       pushFixed(c.x0, c.x1, 0, h);
     } else if (c.kind === "sticky") {
       pushSticky(c.x0, c.x1, 0, h, c.d);
     } else {
-      // Full document coverage for this column.
-      pushDoc(c.x0, c.x1, docTop, h - docBottom);
+      // Document coverage for this column, excluding fixed/sticky bands.
+      // The document draws A translated by (mx*sp, my*sp). To exclude a
+      // viewport region [vy0, vy1] (where an overlay is drawn), we mask out
+      // A-coordinates [vy0 - my*sp, vy1 - my*sp].
+      const masks: [number, number][] = [];
+      for (const b of c.bands) {
+        if (b.kind === "fixed") {
+          // Overlay is static at [b.y0, b.y1] viewport.
+          masks.push([b.y0 - my * sp, b.y1 - my * sp]);
+        } else if (b.kind === "sticky") {
+          const nearTop = b.y0 < docTop + 128;
+          const nearBottom = b.y1 > h - docBottom - 128;
+          if (nearTop || nearBottom) {
+            // Overlay is at [b.y0 + b.d*sp, b.y1 + b.d*sp] viewport.
+            masks.push([b.y0 + (b.d - my) * sp, b.y1 + (b.d - my) * sp]);
+          }
+        }
+      }
+      for (const [s0, s1] of subtractIntervals(docTop, h - docBottom, masks)) {
+        pushDoc(c.x0, c.x1, s0, s1);
+      }
       // Overlays for non-document bands. Sticky is only drawn near the top or
       // bottom (headers/footers); mid-document "sticky" hits are usually
       // spurious matches on repetitive text — the full document layer already
@@ -596,10 +617,12 @@ export function planScrollDraws(plan: ScrollPlan, sp: number, W?: number, H?: nu
   }
 
   // 2. Newly revealed strip from B, with B-side fixed/sticky regions knocked out
-  //    (they are drawn by their own layers). The strip reveals statically: at
-  //    progress sp, the top (docTop+my)*sp pixels of new content are visible
-  //    (scroll up). Starts at 0 to cover the header area (B has new content
-  //    there); the sticky/fixed overlays draw on top.
+  //    (they are drawn by their own layers). The strip samples B at the scroll
+  //    offset corresponding to progress sp: viewport y shows B at
+  //    y + my*(1-sp) (at sp=1 this equals y; at sp=0 the strip is empty).
+  //    Knockouts are B-coordinates converted to viewport: B's [b.y0,b.y1]
+  //    appears at viewport [b.y0 - my*(1-sp), b.y1 - my*(1-sp)].
+  const stripSrcDy = my * (1 - sp);
   if (my > 0.5) {
     // Strip fills [0, docTop + my*sp]: aligns with the moving document's top edge.
     const r1 = docTop + my * sp;
@@ -609,13 +632,23 @@ export function planScrollDraws(plan: ScrollPlan, sp: number, W?: number, H?: nu
         if (c.kind === "sticky") continue;
         const knockouts: [number, number][] = [];
         for (const b of c.bands) {
-          if (b.kind === "fixed") knockouts.push([b.y0, b.y1]);
-          else if (b.kind === "sticky") knockouts.push([b.y0 + b.d * sp, b.y1 + b.d * sp]);
+          if (b.kind === "fixed") {
+            knockouts.push([b.y0 - stripSrcDy, b.y1 - stripSrcDy]);
+          } else if (b.kind === "sticky") {
+            // Only knock out sticky bands that are drawn as overlays (near
+            // top/bottom). Mid-document sticky is not drawn separately, so the
+            // strip must include B's content there.
+            const nearTop = b.y0 < docTop + 128;
+            const nearBottom = b.y1 > h - docBottom - 128;
+            if (nearTop || nearBottom) {
+              knockouts.push([b.y0 - stripSrcDy, b.y1 - stripSrcDy]);
+            }
+          }
         }
         for (const [s0, s1] of subtractIntervals(0, r1, knockouts)) {
           if (s1 - s0 < 0.5) continue;
           ops.push({
-            src: "b", sx: c.x0, sy: s0, sw: c.x1 - c.x0, sh: s1 - s0,
+            src: "b", sx: c.x0, sy: s0 + stripSrcDy, sw: c.x1 - c.x0, sh: s1 - s0,
             dx: c.x0, dy: s0, dw: c.x1 - c.x0, dh: s1 - s0, alpha: 1,
           });
         }
@@ -630,13 +663,23 @@ export function planScrollDraws(plan: ScrollPlan, sp: number, W?: number, H?: nu
         if (c.kind === "sticky") continue;
         const knockouts: [number, number][] = [];
         for (const b of c.bands) {
-          if (b.kind === "fixed") knockouts.push([b.y0, b.y1]);
-          else if (b.kind === "sticky") knockouts.push([b.y0 + b.d * sp, b.y1 + b.d * sp]);
+          if (b.kind === "fixed") {
+            knockouts.push([b.y0 - stripSrcDy, b.y1 - stripSrcDy]);
+          } else if (b.kind === "sticky") {
+            // Only knock out sticky bands that are drawn as overlays (near
+            // top/bottom). Mid-document sticky is not drawn separately, so the
+            // strip must include B's content there.
+            const nearTop = b.y0 < docTop + 128;
+            const nearBottom = b.y1 > h - docBottom - 128;
+            if (nearTop || nearBottom) {
+              knockouts.push([b.y0 - stripSrcDy, b.y1 - stripSrcDy]);
+            }
+          }
         }
         for (const [s0, s1] of subtractIntervals(r0, h, knockouts)) {
           if (s1 - s0 < 0.5) continue;
           ops.push({
-            src: "b", sx: c.x0, sy: s0, sw: c.x1 - c.x0, sh: s1 - s0,
+            src: "b", sx: c.x0, sy: s0 + stripSrcDy, sw: c.x1 - c.x0, sh: s1 - s0,
             dx: c.x0, dy: s0, dw: c.x1 - c.x0, dh: s1 - s0, alpha: 1,
           });
         }

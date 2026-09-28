@@ -320,4 +320,90 @@ describe("scrollplan", () => {
     const ops = planScrollDraws(plan, 0.5);
     assert(ops.length > 0, "expected ops for horizontal scroll");
   });
+
+  it("15. B-strip samples B at scroll offset (sy = viewport + my*(1-sp))", () => {
+    // Scroll down: my<0. At sp=0.5, the strip's source y must be offset by
+    // my*(1-sp) so the revealed content aligns with the scroll position.
+    const { a, b } = makeScrollPair(0, -60);
+    const plan = analyze(a, b, 0, -60);
+    const my = plan.my;
+    assert(my < -0.5, `expected my<0, got ${my}`);
+    const sp = 0.5;
+    const ops = planScrollDraws(plan, sp);
+    const stripOps = ops.filter((o) => o.src === "b" && o.alpha === 1);
+    assert(stripOps.length > 0, "expected B-strip ops");
+    const expectedDy = my * (1 - sp);
+    for (const o of stripOps) {
+      // sy should equal dy + my*(1-sp) (source offset for scroll alignment).
+      const actualOffset = o.sy - o.dy;
+      assert(
+        Math.abs(actualOffset - expectedDy) < 1.0,
+        `B-strip source offset wrong: sy-dy=${actualOffset}, expected ${expectedDy}`,
+      );
+    }
+  });
+
+  it("16. B-strip does not duplicate fixed/sticky content (knockout)", () => {
+    // If B has a fixed header, the strip must knock it out so the fixed
+    // overlay (drawn separately) is the only source for that content.
+    const { a, b } = makeScrollPair(0, -60, 32);
+    const plan = analyze(a, b, 0, -60);
+    // Find the fixed band (header).
+    let fixedY1 = 0;
+    for (const c of plan.cols) {
+      for (const bd of c.bands) {
+        if (bd.kind === "fixed" && bd.y0 === 0) fixedY1 = bd.y1;
+      }
+    }
+    if (fixedY1 > 0) {
+      const ops = planScrollDraws(plan, 0.5);
+      const stripOps = ops.filter((o) => o.src === "b" && o.alpha === 1);
+      // The strip's viewport regions should not overlap the fixed overlay's
+      // position (which is at [0, fixedY1] viewport for a top header).
+      for (const o of stripOps) {
+        const overlapStart = Math.max(o.dy, 0);
+        const overlapEnd = Math.min(o.dy + o.dh, fixedY1);
+        assert(
+          overlapEnd <= overlapStart,
+          `B-strip overlaps fixed overlay at [0,${fixedY1}]: op at dy=${o.dy}, dh=${o.dh}`,
+        );
+      }
+    }
+  });
+
+  it("17. document layer masks out fixed overlay regions (no bleed-through)", () => {
+    // The moving document must exclude fixed bands; otherwise the document
+    // (opaque) would show through the translucent fixed crossfade.
+    const { a, b } = makeScrollPair(0, -60, 32);
+    const plan = analyze(a, b, 0, -60);
+    let fixedBand: { y0: number; y1: number } | null = null;
+    for (const c of plan.cols) {
+      for (const bd of c.bands) {
+        if (bd.kind === "fixed" && bd.y0 === 0) fixedBand = { y0: bd.y0, y1: bd.y1 };
+      }
+    }
+    if (fixedBand) {
+      const sp = 0.5;
+      const ops = planScrollDraws(plan, sp);
+      const my = plan.my;
+      // Document ops are from src 'a' with alpha=1 (not fixed/sticky overlays).
+      // The fixed overlay is at viewport [y0, y1]; document A-coordinates that
+      // map there are [y0 - my*sp, y1 - my*sp].
+      const vy0 = fixedBand.y0, vy1 = fixedBand.y1;
+      const maskA0 = vy0 - my * sp, maskA1 = vy1 - my * sp;
+      for (const o of ops) {
+        if (o.src !== "a" || o.alpha !== 1) continue;
+        // Skip the fixed overlay itself (it's drawn with alpha<1 or as fixed).
+        // Document ops are the ones translated by my*sp.
+        const isDocument = Math.abs(o.dy - (o.sy + my * sp)) < 1.0;
+        if (!isDocument) continue;
+        const overlapStart = Math.max(o.sy, maskA0);
+        const overlapEnd = Math.min(o.sy + o.sh, maskA1);
+        assert(
+          overlapEnd <= overlapStart,
+          `document overlaps fixed mask [${maskA0},${maskA1}]: op sy=${o.sy}, sh=${o.sh}`,
+        );
+      }
+    }
+  });
 });
