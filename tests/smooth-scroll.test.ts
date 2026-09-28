@@ -231,3 +231,145 @@ describe("smooth scroll: QA reports measurable scroll problems", () => {
       JSON.stringify(qa.warnings));
   });
 });
+
+describe("smooth scroll: pre-cut timing model (no double-paid duration)", () => {
+  // A 1300ms scroll must occupy ~1300ms of visual time, rendered in
+  // [nextFrameStart - 1300, nextFrameStart], not [nextFrameStart, nextFrameStart + 1300].
+  const D = 1300;
+  const manifest1300 = () => buildManifest(scrollInput(undefined, 600, D));
+  const nextStateTime = () => manifest1300().frames[1].t;
+
+  it("1. a 1300ms scroll consumes ~1300ms of visual time, not ~2600ms", () => {
+    const ins = planInstructions(manifest1300());
+    const scrolled = ins.filter((x) => x.isScroll && x.mix !== null);
+    // 1300ms at 60fps = 78 frames; allow edge tolerance.
+    assert.ok(scrolled.length >= 74 && scrolled.length <= 82,
+      `expected ~78 scroll frames (1300ms), got ${scrolled.length}`);
+    // The old double-paid model would span ~156 frames (2600ms).
+    assert.ok(scrolled.length < 100, `must not be ~2600ms (double-paid), got ${scrolled.length} frames`);
+  });
+
+  it("2. the visual transition begins at nextStateTime - durationMs", () => {
+    const tNext = nextStateTime();
+    const ins = planInstructions(manifest1300());
+    const scrolled = ins.filter((x) => x.isScroll && x.mix !== null);
+    assert.ok(scrolled.length > 0);
+    // First scroll frame is at output time i*1000/60. Find its output time.
+    const firstIdx = ins.indexOf(scrolled[0]);
+    const tFirst = (firstIdx * 1000) / FPS;
+    const expectedStart = tNext - D;
+    // Within ~2 frames of the expected pre-cut start.
+    assert.ok(Math.abs(tFirst - expectedStart) < 40,
+      `expected start ~${expectedStart}ms (tNext - ${D}), got ${tFirst}ms`);
+  });
+
+  it("3. the visual transition ends at nextStateTime", () => {
+    const tNext = nextStateTime();
+    const ins = planInstructions(manifest1300());
+    const scrolled = ins.filter((x) => x.isScroll && x.mix !== null);
+    const lastIdx = ins.indexOf(scrolled[scrolled.length - 1]);
+    const tLast = (lastIdx * 1000) / FPS;
+    // Last scroll frame is just before tNext (window is [tNext - D, tNext)).
+    assert.ok(tLast < tNext && tNext - tLast < 40,
+      `expected end ~${tNext}ms, last scroll frame at ${tLast}ms`);
+  });
+
+  it("4. at transition start: progress ~0 and pre-scroll screenshot fully visible", () => {
+    const ins = planInstructions(manifest1300());
+    const scrolled = ins.filter((x) => x.isScroll && x.mix !== null);
+    const first = scrolled[0];
+    assert.ok(first.mix! < 0.1, `progress should start near 0, got ${first.mix}`);
+    assert.equal(first.previousFile, "a.png", "pre-scroll screenshot must be the outgoing image");
+    assert.equal(first.file, "b.png", "post-scroll screenshot must be the incoming image");
+  });
+
+  it("5. halfway: both screenshots aligned at ~50% scroll progress", () => {
+    const ins = planInstructions(manifest1300());
+    const scrolled = ins.filter((x) => x.isScroll && x.mix !== null);
+    const mid = scrolled[Math.floor(scrolled.length / 2)];
+    assert.ok(mid.mix! > 0.4 && mid.mix! < 0.6, `midpoint progress ~0.5, got ${mid.mix}`);
+    assert.equal(mid.file, "b.png");
+    assert.equal(mid.previousFile, "a.png");
+    assert.ok(mid.slide, "slide vector present for aligned rendering");
+  });
+
+  it("6. at nextStateTime: progress = 1 and post-scroll screenshot settled", () => {
+    const tNext = nextStateTime();
+    const ins = planInstructions(manifest1300());
+    // First frame at or after tNext: the cut has landed, scroll is done.
+    const idx = ins.findIndex((_, i) => (i * 1000) / FPS >= tNext);
+    assert.ok(idx >= 0);
+    const settled = ins[idx];
+    assert.equal(settled.file, "b.png");
+    assert.equal(settled.mix, null, "no transition active at the settled timestamp");
+    assert.equal(settled.isScroll, undefined, "scroll flag cleared at settled timestamp");
+    assert.equal(settled.previousFile, undefined);
+  });
+
+  it("7. there is NO second scroll transition after nextStateTime", () => {
+    const tNext = nextStateTime();
+    const ins = planInstructions(manifest1300());
+    const after = ins.filter((_, i) => (i * 1000) / FPS >= tNext);
+    assert.ok(after.length > 0);
+    assert.ok(!after.some((x) => x.isScroll), "no scroll frames on or after the settled timestamp");
+    assert.ok(!after.some((x) => x.mix !== null && x.previousFile !== undefined && x.slide !== undefined),
+      "no post-cut slide transition either");
+  });
+
+  it("8. post-scroll frame actions do not occur before the scroll completes", () => {
+    const tNext = nextStateTime();
+    const m = buildManifest(baseInput([
+      { file: "a.png", actions: [{ kind: "scroll", dy: 600, durationMs: D }] },
+      {
+        file: "b.png",
+        actions: [{ kind: "click", x: 100, y: 100 }],
+        holdMs: 3000,
+      },
+    ]));
+    // The scroll event itself is the only non-cursor action event in the pre-cut window.
+    // Frame B's click must be synthesized at or after the settled timestamp.
+    const preSettled = m.events.filter((e) => e.t < tNext && e.t >= tNext - D);
+    for (const e of preSettled) {
+      if (e.type === "scroll") continue;
+      if (e.type === "mouse") continue; // cursor samples are fine
+      assert.fail(`non-scroll action event before settled time: ${JSON.stringify(e)}`);
+    }
+    // Frame B starts at tNext; its actions begin after CUT_BREATHE, i.e. after tNext.
+    const frameBStart = m.frames[1].t;
+    assert.equal(frameBStart, tNext);
+  });
+
+  it("9. narration/state timing semantics are unchanged", () => {
+    const m = buildManifest(baseInput([
+      { file: "a.png", actions: [{ kind: "scroll", dy: 600, durationMs: D }], caption: "before scroll" },
+      { file: "b.png", holdMs: 3000, caption: "after scroll" },
+    ]));
+    const tNext = m.frames[1].t;
+    // Captions are anchored to frame start times, not shifted by the pre-cut visual.
+    assert.equal(m.captions[0].start, m.frames[0].t);
+    assert.equal(m.captions[1].start, tNext, "post-scroll caption still anchored at the settled timestamp");
+    const ins = planInstructions(m);
+    // The caption shown during the pre-cut scroll window still belongs to frame A.
+    const scrolled = ins.filter((x) => x.isScroll && x.mix !== null);
+    const firstScrollIdx = ins.indexOf(scrolled[0]);
+    assert.equal(ins[firstScrollIdx].caption, "before scroll");
+    // At the settled timestamp, the caption flips to frame B.
+    const settledIdx = ins.findIndex((_, i) => (i * 1000) / FPS >= tNext);
+    assert.equal(ins[settledIdx].caption, "after scroll");
+  });
+
+  it("10. determinism and parallel-worker statelessness hold", () => {
+    const input = scrollInput(undefined, 600, D);
+    const a = planInstructions(buildManifest(input));
+    const b = planInstructions(buildManifest(input));
+    assert.deepEqual(a, b, "planning must be deterministic across runs");
+    for (const x of a.filter((x) => x.isScroll)) {
+      // Every scroll frame names both images: a worker starting mid-scroll
+      // can load both without relying on compositor page state.
+      assert.ok(x.file, "file present");
+      assert.ok(x.previousFile, "previousFile present for stateless workers");
+      assert.ok(typeof x.mix === "number", "mix present");
+      assert.ok(x.slide, "slide vector present");
+    }
+  });
+});
