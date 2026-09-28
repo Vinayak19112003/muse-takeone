@@ -98,23 +98,6 @@ ${scrollplanJs}
     return c;
   }
 
-  // Test helper: get draw ops for a scroll plan at sp (for debugging).
-  window.__getScrollOpsForTest = (plan, sp) => {
-    return planScrollDraws(plan, sp);
-  };
-
-  // Test helper: composite a scroll plan at sp and return base64 PNG.
-  window.__compositeScrollPlanForTest = async (plan, sp, aFile, bFile) => {
-    const aImg = await window.__loadImage(aFile);
-    const bImg = await window.__loadImage(bFile);
-    const c = compositeScrollPlan(plan, sp, aImg, bImg);
-    const blob = await new Promise((r) => c.toBlob(r, "image/png"));
-    const u = new Uint8Array(await blob.arrayBuffer());
-    let bin = "";
-    for (let i = 0; i < u.length; i += 0x8000) bin += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
-    return "data:image/png;base64," + btoa(bin);
-  };
-
   // Analyze a timed scroll: measure the true document displacement, partition
   // into document/fixed/sticky regions, detect the scrollbar. Returns a
   // serializable ScrollPlan. Never throws: on failure returns a fallback plan

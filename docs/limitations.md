@@ -1,6 +1,6 @@
 # Limitations
 
-Honest boundaries of what tracereel v0.1.0 can and cannot do.
+Honest boundaries of what TraceReel can and cannot do.
 
 ## Reconstruction is not a recording
 
@@ -45,23 +45,29 @@ video.
 ## Scroll is reconstructed, not recorded footage
 
 A `scroll` action declares `dx`/`dy`/`durationMs`; the *screenshots* carry the
-visual change. The cut between them is reconstructed as a true scroll: both
-screenshots translate with ease-in-out over the scroll's own `durationMs`, so
-overlapping page content stays aligned and reads as one continuous page moving.
-There is no continuous scrolling footage — if the screenshots are far apart or
-the page repainted between captures, intermediate content is not invented. For
-very long scrolls, capture more intermediate states.
+visual change. Before rendering, the compositor analyzes each scroll's
+screenshot pair: it measures the true document displacement via template
+matching (the declared `dy` is only a prior), partitions the frame into
+document, sticky, and fixed regions, and detects the scrollbar gutter.
+
+The scroll is then rendered as a moving document layer plus a fixed viewport
+layer: the pre-scroll document translates by the measured offset, the
+newly-revealed strip comes from the post-scroll screenshot, fixed regions
+crossfade without translating, sticky regions move by their own measured
+offset, and the scrollbar stays viewport-fixed with an interpolated thumb.
+Low-confidence analysis falls back safely to pure document motion with a QA
+warning. There is no continuous scrolling footage — if the screenshots are
+far apart or the page repainted between captures, intermediate content is not
+invented. For very long scrolls, capture more intermediate states.
 
 ### Sticky / fixed elements during scrolls
 
-Scroll reconstruction translates the whole frame. Pages with sticky or fixed
-elements (e.g. a pinned site header) will show that element sliding with the
-page during the scroll transition instead of staying pinned — briefly, it may
-appear twice (once on each screenshot) mid-transition. Detecting stationary
-regions automatically requires pixel-level screenshot analysis with tolerance
-for translucent or dynamic headers; that is not implemented. If a pinned
-header dominates the visual, prefer smaller scroll steps between captures so
-the artifact is brief.
+Region classification is intentionally conservative. Repetitive page content
+can confuse displacement matching, and complex translucent or dynamic fixed
+UI (animated headers, video overlays) may not classify perfectly. Screenshots
+with major DOM or layout changes between captures (not just scrolling) may
+fall back or show brief artifacts. If a pinned header dominates the visual,
+prefer smaller scroll steps between captures.
 
 ## Web content only
 
@@ -70,10 +76,11 @@ scenes render as whatever the screenshot shows — a still. Pages that repaint
 faster than the render samples may look frozen; cursor and camera are
 unaffected.
 
-## No audio
+## Audio
 
-The output is silent MP4/WebM. Narration, music, and sound effects are outside
-the tool — mux them in with ffmpeg afterwards.
+TraceReel renders native audio: per-state narration (TTS), background music
+with ducking under narration, and final loudness mastering, all muxed into
+the output MP4. See AUDIO.md for the full documentation.
 
 ## Performance
 
@@ -85,4 +92,4 @@ short takes.
 ## Platform
 
 Developed and tested on Linux (Node 20+). macOS/Windows should work (Node +
-Chromium + ffmpeg are portable) but are not verified for v0.1.0.
+Chromium + ffmpeg are portable) but are less verified.
