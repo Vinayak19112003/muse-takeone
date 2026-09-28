@@ -10,7 +10,7 @@ All notable changes to TraceReel (formerly muse-takeone). Format follows [Keep a
 
 - `tracereel audio`: mix agent-supplied narration and background music onto
   a reconstructed video, producing a final narrated MP4.
-- Agent-provided narration clips (`audio.narration[]`): per-clip file,
+- Agent-provided narration clips (top-level `narration[]`): per-clip file,
   scene/state-anchored start times, gain, fades. TraceReel places them on
   the timeline — it does not generate speech.
 - State/scene synchronization: narration is anchored to trace states, so
