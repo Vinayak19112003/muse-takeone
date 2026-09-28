@@ -209,9 +209,29 @@ export interface TraceMusic {
   duckUnderNarration?: boolean;
 }
 
+/** Optional final loudness normalization for the mixed program audio. */
+export interface TraceLoudness {
+  /**
+   * Target integrated loudness in LUFS (EBU R128). Default -16.
+   * Applied after mixing and ducking; scene timing is untouched.
+   */
+  targetLUFS?: number;
+  /**
+   * Maximum true peak in dBTP. Default -1.5.
+   * The true-peak limiter prevents clipping during normalization.
+   */
+  maxTruePeakDbTP?: number;
+  /**
+   * Disable loudness normalization entirely; the mix ships as-is.
+   * Default false.
+   */
+  disabled?: boolean;
+}
+
 /** Trace-level audio: everything here is agent-supplied. TraceReel mixes; it never synthesizes. */
 export interface TraceAudio {
   music?: TraceMusic;
+  loudness?: TraceLoudness;
 }
 
 /**

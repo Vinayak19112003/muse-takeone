@@ -2,7 +2,8 @@
  * Mux: attach the mixed audio to the finished video.
  *
  * Hard requirement: the video stream is NEVER re-encoded. The mux is a single
- * FFmpeg invocation:
+ * FFmpeg invocation (two when loudness normalization is enabled: mix to a
+ * temp PCM file first, measure it, then apply two-pass loudnorm):
  *
  *   ffmpeg -i video.mp4 -i narr1.mp3 ... -i music.m4a \
  *     -filter_complex "<mix graph>" \
@@ -11,12 +12,21 @@
  *
  * `-c:v copy` means the video frames are bit-identical to the input;
  * `muxAudio` verifies this after the run by comparing per-stream frame hashes.
+ *
+ * Loudness normalization (default on, -16 LUFS / -1.5 dBTP) runs after the
+ * mix via two-pass loudnorm with linear=true: constant gain, deterministic
+ * for fixed inputs, true-peak limiting active so it can never clip. It does
+ * not touch scene timing, the ducking graph, or the video stream.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { resolveFfmpeg } from "../ffmpeg.js";
 import { resolveFfprobe } from "./probe.js";
 import { buildMixSpec } from "./mix.js";
+import { measureLoudness, loudnormApplyFilter } from "./loudness.js";
 import type { AudioPlan } from "./types.js";
 import { AUDIO_OUTPUT } from "./types.js";
 
@@ -78,22 +88,28 @@ export function muxAudio(opts: MuxAudioOptions): MuxAudioResult {
   if (!existsSync(opts.videoFile)) throw new Error(`video file not found: ${opts.videoFile}`);
 
   const spec = buildMixSpec(opts.plan, opts.baseDir);
-  const args: string[] = ["-hide_banner", "-loglevel", "error", "-y", "-i", opts.videoFile];
-  for (const f of spec.inputFiles) args.push("-i", f);
-  args.push(
-    "-filter_complex", spec.filterComplex,
-    "-map", "0:v",
-    "-map", spec.audioOutLabel,
-    "-c:v", "copy",
-    "-c:a", AUDIO_OUTPUT.codec,
-    "-b:a", AUDIO_OUTPUT.bitrate,
-    "-ar", String(AUDIO_OUTPUT.sampleRate),
-    "-ac", String(AUDIO_OUTPUT.channels),
-    "-movflags", "+faststart",
-    opts.outFile,
-  );
-  if (opts.verbose) console.error(`[tracereel] ffmpeg ${args.join(" ")}`);
-  execFileSync(resolveFfmpeg(), args, { stdio: opts.verbose ? "inherit" : "pipe", maxBuffer: 64 * 1024 * 1024 });
+  const ffmpeg = resolveFfmpeg();
+
+  if (opts.plan.loudness.enabled) {
+    muxWithLoudness(opts, spec, ffmpeg);
+  } else {
+    const args: string[] = ["-hide_banner", "-loglevel", "error", "-y", "-i", opts.videoFile];
+    for (const f of spec.inputFiles) args.push("-i", f);
+    args.push(
+      "-filter_complex", spec.filterComplex,
+      "-map", "0:v",
+      "-map", spec.audioOutLabel,
+      "-c:v", "copy",
+      "-c:a", AUDIO_OUTPUT.codec,
+      "-b:a", AUDIO_OUTPUT.bitrate,
+      "-ar", String(AUDIO_OUTPUT.sampleRate),
+      "-ac", String(AUDIO_OUTPUT.channels),
+      "-movflags", "+faststart",
+      opts.outFile,
+    );
+    if (opts.verbose) console.error(`[tracereel] ffmpeg ${args.join(" ")}`);
+    execFileSync(ffmpeg, args, { stdio: opts.verbose ? "inherit" : "pipe", maxBuffer: 64 * 1024 * 1024 });
+  }
 
   // Prove the video stream was copied, not re-encoded.
   const before = videoFrameHashes(opts.videoFile);
@@ -118,4 +134,57 @@ export function muxAudio(opts: MuxAudioOptions): MuxAudioResult {
     audioSampleRate: Number(aStream.sample_rate ?? 0),
     audioChannels: aStream.channels ?? 0,
   };
+}
+
+/**
+ * Loudness-normalized mux: render the mix (ducking included) to a temp PCM
+ * file, measure it with loudnorm pass 1, then apply the measured linear gain
+ * plus true-peak limiting while muxing with the copied video stream.
+ */
+function muxWithLoudness(
+  opts: MuxAudioOptions,
+  spec: { inputFiles: string[]; filterComplex: string; audioOutLabel: string },
+  ffmpeg: string,
+): void {
+  const tmpMix = join(tmpdir(), `tracereel-mix-${randomUUID()}.wav`);
+  try {
+    // Run 1: the exact same mix graph, rendered to lossless PCM.
+    const mixArgs: string[] = ["-hide_banner", "-loglevel", "error", "-y", "-i", opts.videoFile];
+    for (const f of spec.inputFiles) mixArgs.push("-i", f);
+    mixArgs.push(
+      "-filter_complex", spec.filterComplex,
+      "-map", spec.audioOutLabel,
+      "-c:a", "pcm_s16le",
+      "-ar", String(AUDIO_OUTPUT.sampleRate),
+      "-ac", String(AUDIO_OUTPUT.channels),
+      tmpMix,
+    );
+    if (opts.verbose) console.error(`[tracereel] ffmpeg ${mixArgs.join(" ")}`);
+    execFileSync(ffmpeg, mixArgs, { stdio: opts.verbose ? "inherit" : "pipe", maxBuffer: 64 * 1024 * 1024 });
+
+    // Pass 1: measure the finished mix.
+    const measured = measureLoudness(tmpMix, opts.plan.loudness);
+
+    // Run 2: apply the measured linear gain + true-peak limit, mux with -c:v copy.
+    const normFilter = loudnormApplyFilter(opts.plan.loudness, measured);
+    const muxArgs: string[] = [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-i", opts.videoFile,
+      "-i", tmpMix,
+      "-af", normFilter,
+      "-map", "0:v",
+      "-map", "1:a",
+      "-c:v", "copy",
+      "-c:a", AUDIO_OUTPUT.codec,
+      "-b:a", AUDIO_OUTPUT.bitrate,
+      "-ar", String(AUDIO_OUTPUT.sampleRate),
+      "-ac", String(AUDIO_OUTPUT.channels),
+      "-movflags", "+faststart",
+      opts.outFile,
+    ];
+    if (opts.verbose) console.error(`[tracereel] ffmpeg ${muxArgs.join(" ")}`);
+    execFileSync(ffmpeg, muxArgs, { stdio: opts.verbose ? "inherit" : "pipe", maxBuffer: 64 * 1024 * 1024 });
+  } finally {
+    rmSync(tmpMix, { force: true });
+  }
 }

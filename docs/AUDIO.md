@@ -208,6 +208,34 @@ Audio QA reports verifiable facts only — no subjective quality scores:
 - music present, loop state, volume, ducking on/off
 - final codec / sample rate / channels / duration
 - silent-track detection (mean volume ≤ −60 dB warns)
+- loudness: measured integrated LUFS and true peak (dBTP) of the final file,
+  the target, and whether normalization ran; warns when the measured program
+  misses the target by more than 1 LU or breaches the true-peak ceiling
+
+## Loudness normalization
+
+After mixing and ducking, the finished program is mastered to a consistent
+loudness with FFmpeg's two-pass `loudnorm` (`linear=true`: a constant gain,
+deterministic for fixed inputs — no dynamic range reshaping that could fight
+the ducking). The true-peak limiter stays active, so normalization can never
+introduce clipping.
+
+Defaults: **−16 LUFS integrated, −1.5 dBTP maximum true peak.**
+
+Configure it in the trace:
+
+```json
+"audio": {
+  "loudness": { "targetLUFS": -16, "maxTruePeakDbTP": -1.5 }
+}
+```
+
+Or disable it (`"loudness": { "disabled": true }`) to ship the mix as-is.
+CLI overrides: `tracereel audio --loudness-target -14 --loudness-peak -1`,
+`--no-loudness` to disable.
+
+Normalization never touches scene timing, the ducking graph, or the video
+stream (`-c:v copy` still holds; frame hashes are verified identical).
 
 ## Subtitles
 

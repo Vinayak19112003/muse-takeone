@@ -19,14 +19,24 @@ import { probeAudioFile } from "./probe.js";
 import type {
   AudioIssue,
   AudioPlan,
+  PlannedLoudness,
   PlannedMusic,
   PlannedNarrationClip,
 } from "./types.js";
-import { SUPPORTED_AUDIO_CODECS } from "./types.js";
+import { LOUDNESS_DEFAULTS, SUPPORTED_AUDIO_CODECS } from "./types.js";
 
 export interface PlanAudioOptions {
   /** Directory trace-relative audio paths resolve against. */
   baseDir: string;
+  /**
+   * CLI overrides for loudness normalization; trace values win unless the
+   * override is set. `disabled: true` turns normalization off entirely.
+   */
+  loudnessOverride?: {
+    targetLUFS?: number;
+    maxTruePeakDbTP?: number;
+    disabled?: boolean;
+  };
 }
 
 /** Resolve a trace-relative audio path, rejecting anything outside baseDir. */
@@ -260,5 +270,58 @@ export function planAudio(
     }
   }
 
-  return { narration, music, videoDurationMs, errors, warnings };
+  return { narration, music, loudness: planLoudness(trace, opts, errors, warnings), videoDurationMs, errors, warnings };
+}
+
+/**
+ * Resolve the final loudness-normalization plan from trace.audio.loudness,
+ * with CLI overrides taking precedence when set. Validation failures are
+ * errors: the build must not proceed with a nonsense target.
+ */
+function planLoudness(
+  trace: TraceReelTrace,
+  opts: PlanAudioOptions,
+  errors: AudioIssue[],
+  warnings: AudioIssue[],
+): PlannedLoudness {
+  const base = "/audio/loudness";
+  const t = trace.audio?.loudness ?? {};
+  const o = opts.loudnessOverride ?? {};
+  const disabled = o.disabled ?? t.disabled ?? false;
+
+  const rawTarget = o.targetLUFS ?? t.targetLUFS ?? LOUDNESS_DEFAULTS.targetLUFS;
+  const rawPeak = o.maxTruePeakDbTP ?? t.maxTruePeakDbTP ?? LOUDNESS_DEFAULTS.maxTruePeakDbTP;
+
+  let targetLUFS = LOUDNESS_DEFAULTS.targetLUFS;
+  if (!Number.isFinite(rawTarget) || rawTarget > 0 || rawTarget < -70) {
+    errors.push(issue("LOUDNESS_INVALID_TARGET",
+      `loudness targetLUFS must be a finite number between -70 and 0, got ${rawTarget}`,
+      `${base}/targetLUFS`, "Use e.g. -16 for polished speech-heavy programs."));
+  } else {
+    targetLUFS = rawTarget;
+  }
+  let maxTruePeakDbTP = LOUDNESS_DEFAULTS.maxTruePeakDbTP;
+  if (!Number.isFinite(rawPeak) || rawPeak > 0) {
+    errors.push(issue("LOUDNESS_INVALID_PEAK",
+      `loudness maxTruePeakDbTP must be a finite number <= 0, got ${rawPeak}`,
+      `${base}/maxTruePeakDbTP`, "Use e.g. -1.5 to leave headroom against clipping."));
+  } else {
+    maxTruePeakDbTP = rawPeak;
+  }
+
+  if (!disabled && targetLUFS > maxTruePeakDbTP) {
+    // The integrated target sits above the true-peak ceiling: the average
+    // level cannot exceed the peak ceiling, so the limiter would clamp the
+    // program constantly. Flag the contradictory config.
+    warnings.push(issue("LOUDNESS_TARGET_ABOVE_PEAK",
+      `loudness target ${targetLUFS} LUFS sits above the true-peak ceiling ${maxTruePeakDbTP} dBTP; the limiter will clamp the program`,
+      base, "Lower targetLUFS or raise maxTruePeakDbTP."));
+  }
+
+  return {
+    enabled: !disabled,
+    targetLUFS,
+    maxTruePeakDbTP,
+    targetLRA: LOUDNESS_DEFAULTS.targetLRA,
+  };
 }

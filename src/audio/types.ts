@@ -52,8 +52,7 @@ export interface PlannedNarrationClip {
 }
 
 /** Background music resolved onto the final output timeline. */
-export interface PlannedMusic {
-  /** The trace's music config. */
+export interface PlannedMusic {  /** The trace's music config. */
   music: TraceMusic;
   /** Probed music file duration, in ms. */
   fileDurationMs: number;
@@ -71,12 +70,38 @@ export interface PlannedMusic {
   duckUnderNarration: boolean;
 }
 
+/**
+ * Final loudness normalization resolved from the trace's audio.loudness.
+ * Runs after mixing and ducking via FFmpeg's two-pass loudnorm (linear gain,
+ * deterministic for fixed inputs): the mix is rendered once, measured, then a
+ * constant gain plus true-peak limiting is applied to hit the target.
+ */
+export interface PlannedLoudness {
+  /** Whether normalization runs. False when the trace sets disabled: true. */
+  enabled: boolean;
+  /** Effective target integrated loudness, LUFS. */
+  targetLUFS: number;
+  /** Effective maximum true peak, dBTP. */
+  maxTruePeakDbTP: number;
+  /** Loudness-range target, LU. Fixed at 11 (EBU R128 default). */
+  targetLRA: number;
+}
+
+/** Default loudness targets: polished speech-heavy program level. */
+export const LOUDNESS_DEFAULTS: { targetLUFS: number; maxTruePeakDbTP: number; targetLRA: number } = {
+  targetLUFS: -16,
+  maxTruePeakDbTP: -1.5,
+  targetLRA: 11,
+};
+
 /** The complete, validated audio build plan. */
 export interface AudioPlan {
   /** Narration placements in trace order. */
   narration: PlannedNarrationClip[];
   /** Music plan, when the trace supplies music. */
   music: PlannedMusic | null;
+  /** Loudness normalization plan (enabled by default). */
+  loudness: PlannedLoudness;
   /** Final output timeline duration (the video's), in ms. */
   videoDurationMs: number;
   /** Structured validation failures: the build must not proceed. */
@@ -115,6 +140,14 @@ export interface AudioQaMetrics {
    *  limiter targets 0.95 (-0.45 dB), so peaks above that indicate the
    *  limiter is not in the chain. */
   maxVolumeDb: number | null;
+  /** Whether loudness normalization ran on the final mix. */
+  loudnessNormalized: boolean;
+  /** Loudness target the run aimed for, LUFS (null when disabled). */
+  loudnessTargetLufs: number | null;
+  /** Measured integrated loudness of the final file, LUFS (EBU R128). */
+  loudnessIntegratedLufs: number | null;
+  /** Measured true peak of the final file, dBTP. */
+  loudnessTruePeakDbTP: number | null;
 }
 
 export interface AudioQaReport {
