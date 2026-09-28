@@ -9,6 +9,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolveFfmpeg } from "../ffmpeg.js";
 import { resolveFfprobe, probeAudioFile } from "./probe.js";
+import { probeLoudness } from "./loudness.js";
 import type { AudioPlan, AudioQaMetrics, AudioQaReport } from "./types.js";
 import { AUDIO_OUTPUT } from "./types.js";
 
@@ -59,6 +60,10 @@ export function qaAudio(plan: AudioPlan, opts: QaAudioOptions = {}): AudioQaRepo
     finalDurationMs: null,
     silent: null,
     maxVolumeDb: null,
+    loudnessNormalized: plan.loudness.enabled,
+    loudnessTargetLufs: plan.loudness.enabled ? plan.loudness.targetLUFS : null,
+    loudnessIntegratedLufs: null,
+    loudnessTruePeakDbTP: null,
   };
 
   // Plan-level warnings (these mirror plan warnings as plain QA strings).
@@ -105,6 +110,22 @@ export function qaAudio(plan: AudioPlan, opts: QaAudioOptions = {}): AudioQaRepo
         // The mix chain ends in alimiter=limit=0.95 (~-0.45 dB); a peak above
         // that means the limiter is not protecting the mix.
         if (maxDb > -0.4) warnings.push(`[audio] clipping risk: peak ${maxDb.toFixed(1)} dB exceeds the limiter ceiling`);
+      }
+      // Loudness QA: measure the finished file with EBU R128 loudnorm and
+      // compare against the plan's targets.
+      const { integratedLufs, truePeakDbTP } = probeLoudness(outFile);
+      metrics.loudnessIntegratedLufs = integratedLufs;
+      metrics.loudnessTruePeakDbTP = truePeakDbTP;
+      if (plan.loudness.enabled) {
+        if (integratedLufs !== null &&
+            Math.abs(integratedLufs - plan.loudness.targetLUFS) > 1.0) {
+          warnings.push(
+            `[audio] loudness off target: measured ${integratedLufs.toFixed(1)} LUFS, target ${plan.loudness.targetLUFS} LUFS`);
+        }
+        if (truePeakDbTP !== null && truePeakDbTP > plan.loudness.maxTruePeakDbTP + 0.1) {
+          warnings.push(
+            `[audio] true peak ${truePeakDbTP.toFixed(1)} dBTP exceeds the ${plan.loudness.maxTruePeakDbTP} dBTP ceiling`);
+        }
       }
     }
   }

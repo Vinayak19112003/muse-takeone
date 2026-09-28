@@ -513,8 +513,11 @@ program
   .option("-o, --out <file>", "output MP4 (default <video-dir>/<video-base>-narrated.mp4)")
   .option("--adapter <name>", "force an adapter: muse | grokbot | generic (default: picked from the trace source)")
   .option("--subtitles <format>", "export subtitle cues from narration: srt | vtt | both (written next to the output)")
+  .option("--loudness-target <lufs>", "override loudness target in LUFS (default -16; trace audio.loudness.targetLUFS also works)")
+  .option("--loudness-peak <dbtp>", "override max true peak in dBTP (default -1.5)")
+  .option("--no-loudness", "disable loudness normalization; the mix ships as-is")
   .option("--json", "machine-readable output")
-  .action(async (videoFile: string, o: { trace?: string; out?: string; adapter?: string; subtitles?: string; json?: boolean }) => {
+  .action(async (videoFile: string, o: { trace?: string; out?: string; adapter?: string; subtitles?: string; loudnessTarget?: string; loudnessPeak?: string; loudness?: boolean; json?: boolean }) => {
     const { join, dirname, basename, resolve, sep, extname } = await import("node:path");
     const { writeFileSync } = await import("node:fs");
     if (!o.trace) {
@@ -550,7 +553,27 @@ program
       const { RECONSTRUCTION_DEFAULTS, resolveConfig } = await import("./config.js");
       const manifest = buildReconstructionManifest(engineInput, resolveConfig(RECONSTRUCTION_DEFAULTS, undefined));
       const { planAudio } = await import("./audio/plan.js");
-      const plan = planAudio(trace, manifest, { baseDir });
+      const loudnessOverride: { targetLUFS?: number; maxTruePeakDbTP?: number; disabled?: boolean } = {};
+      if (o.loudnessTarget !== undefined) {
+        const v = Number(o.loudnessTarget);
+        if (!Number.isFinite(v)) {
+          log(`audio: --loudness-target must be a number (got ${o.loudnessTarget})`);
+          process.exitCode = 1;
+          return;
+        }
+        loudnessOverride.targetLUFS = v;
+      }
+      if (o.loudnessPeak !== undefined) {
+        const v = Number(o.loudnessPeak);
+        if (!Number.isFinite(v)) {
+          log(`audio: --loudness-peak must be a number (got ${o.loudnessPeak})`);
+          process.exitCode = 1;
+          return;
+        }
+        loudnessOverride.maxTruePeakDbTP = v;
+      }
+      if (o.loudness === false) loudnessOverride.disabled = true;
+      const plan = planAudio(trace, manifest, { baseDir, loudnessOverride });
       for (const w of plan.warnings) log(`warning: ${w.code}: ${w.message}`);
       if (plan.errors.length) {
         for (const e of plan.errors) log(`error: ${e.code}: ${e.message}${e.suggestion ? ` (${e.suggestion})` : ""}`);
@@ -599,11 +622,24 @@ program
           ? { loops: aqa.metrics.musicLoops, volume: aqa.metrics.musicVolume, ducking: aqa.metrics.duckingEnabled }
           : null,
         audio: { codec: aqa.metrics.finalCodec, sampleRate: aqa.metrics.finalSampleRate, channels: aqa.metrics.finalChannels },
+        loudness: {
+          normalized: aqa.metrics.loudnessNormalized,
+          targetLufs: aqa.metrics.loudnessTargetLufs,
+          integratedLufs: aqa.metrics.loudnessIntegratedLufs,
+          truePeakDbTP: aqa.metrics.loudnessTruePeakDbTP,
+        },
         subtitles: subtitleFiles,
         audioWarnings: aqa.warnings,
       };
       if (o.json) console.log(JSON.stringify(summary, null, 2));
-      else log(`audio done: ${muxed.outFile}`);
+      else {
+        const l = aqa.metrics;
+        if (l.loudnessIntegratedLufs !== null && l.loudnessTruePeakDbTP !== null) {
+          log(`loudness: ${l.loudnessIntegratedLufs.toFixed(1)} LUFS integrated, ${l.loudnessTruePeakDbTP.toFixed(1)} dBTP true peak` +
+            (l.loudnessNormalized ? ` (normalized to ${l.loudnessTargetLufs} LUFS)` : " (normalization disabled)"));
+        }
+        log(`audio done: ${muxed.outFile}`);
+      }
     } catch (e) {
       log(`audio failed: ${(e as Error).message}`);
       process.exitCode = 1;
@@ -762,6 +798,11 @@ program
             }
           : null,
         finalAudio: { codec: "aac", sampleRate: 48000, channels: 2 },
+        loudness: {
+          enabled: aplan.loudness.enabled,
+          targetLUFS: aplan.loudness.targetLUFS,
+          maxTruePeakDbTP: aplan.loudness.maxTruePeakDbTP,
+        },
         errors: aplan.errors.map((e) => `${e.code}: ${e.message}`),
         warnings: [...aplan.errors.map((e) => `${e.code}: ${e.message}`), ...aqa.warnings],
       };

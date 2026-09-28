@@ -29,6 +29,7 @@ import { probeAudioFile } from "../src/audio/probe.js";
 import { planAudio, resolveAudioPath } from "../src/audio/plan.js";
 import { buildMixSpec } from "../src/audio/mix.js";
 import { muxAudio, videoFrameHashes } from "../src/audio/mux.js";
+import { measureLoudness, loudnormApplyFilter } from "../src/audio/loudness.js";
 import { qaAudio } from "../src/audio/qa.js";
 import { cuesFromPlan, cuesToSrt, cuesToVtt } from "../src/audio/subtitles.js";
 import { writeBundle, loadBundle } from "../src/bundle.js";
@@ -365,4 +366,162 @@ test("bundle round-trips narration and music into audio/", () => {
   const manifest = buildReconstructionManifest(input, resolveConfig(RECONSTRUCTION_DEFAULTS, undefined));
   const plan = planAudio(loaded.trace, manifest, { baseDir: bundleDir });
   assert.equal(plan.errors.length, 0);
+});
+
+test("loudness normalization is enabled by default with -16 LUFS / -1.5 dBTP", () => {
+  const { dir, trace, manifest } = makeFixture();
+  const plan = planAudio(trace, manifest, { baseDir: dir });
+  assert.equal(plan.errors.length, 0);
+  assert.equal(plan.loudness.enabled, true);
+  assert.equal(plan.loudness.targetLUFS, -16);
+  assert.equal(plan.loudness.maxTruePeakDbTP, -1.5);
+});
+
+test("loudness can be disabled in the trace", () => {
+  const { dir, trace, manifest } = makeFixture();
+  const t = structuredClone(trace);
+  t.audio!.loudness = { disabled: true };
+  const plan = planAudio(t, manifest, { baseDir: dir });
+  assert.equal(plan.errors.length, 0);
+  assert.equal(plan.loudness.enabled, false);
+});
+
+test("custom loudness targets are respected", () => {
+  const { dir, trace, manifest } = makeFixture();
+  const t = structuredClone(trace);
+  t.audio!.loudness = { targetLUFS: -14, maxTruePeakDbTP: -1 };
+  const plan = planAudio(t, manifest, { baseDir: dir });
+  assert.equal(plan.errors.length, 0);
+  assert.equal(plan.loudness.enabled, true);
+  assert.equal(plan.loudness.targetLUFS, -14);
+  assert.equal(plan.loudness.maxTruePeakDbTP, -1);
+});
+
+test("invalid loudness targets are structured errors", () => {
+  const { dir, trace, manifest } = makeFixture();
+  const t1 = structuredClone(trace);
+  t1.audio!.loudness = { targetLUFS: 5 };
+  const p1 = planAudio(t1, manifest, { baseDir: dir });
+  assert.ok(p1.errors.some((e) => e.code === "LOUDNESS_INVALID_TARGET"));
+  const t2 = structuredClone(trace);
+  t2.audio!.loudness = { maxTruePeakDbTP: 2 };
+  const p2 = planAudio(t2, manifest, { baseDir: dir });
+  assert.ok(p2.errors.some((e) => e.code === "LOUDNESS_INVALID_PEAK"));
+});
+
+test("CLI loudness overrides take precedence over the trace", () => {
+  const { dir, trace, manifest } = makeFixture();
+  const t = structuredClone(trace);
+  t.audio!.loudness = { targetLUFS: -14 };
+  const plan = planAudio(t, manifest, {
+    baseDir: dir,
+    loudnessOverride: { targetLUFS: -20, disabled: true },
+  });
+  assert.equal(plan.errors.length, 0);
+  assert.equal(plan.loudness.enabled, false);
+  assert.equal(plan.loudness.targetLUFS, -20);
+});
+
+test("loudnorm measurement is deterministic for a fixed input", () => {
+  const { dir } = makeFixture();
+  const clip = join(dir, "audio", "narration", "intro.mp3");
+  const plan = { enabled: true, targetLUFS: -16, maxTruePeakDbTP: -1.5, targetLRA: 11 };
+  const a = measureLoudness(clip, plan);
+  const b = measureLoudness(clip, plan);
+  assert.deepEqual(a, b);
+  assert.ok(Number.isFinite(a.integratedLufs));
+  assert.ok(Number.isFinite(a.truePeakDbTP));
+});
+
+test("loudnorm apply filter carries measured values with linear=true", () => {
+  const f = loudnormApplyFilter(
+    { enabled: true, targetLUFS: -16, maxTruePeakDbTP: -1.5, targetLRA: 11 },
+    { integratedLufs: -27.03, truePeakDbTP: -8.51, loudnessRange: 5.2, thresholdDb: -37.54, targetOffset: 0 },
+  );
+  assert.ok(f.includes("measured_I=-27.03"));
+  assert.ok(f.includes("measured_TP=-8.51"));
+  assert.ok(f.includes("linear=true"));
+  assert.ok(f.includes("I=-16"));
+  // 0.5 dB codec headroom: the filter targets -2.0 so the final AAC file
+  // stays under the -1.5 dBTP ceiling.
+  assert.ok(f.includes("TP=-2.00"));
+});
+
+test("mux with normalization hits the loudness target, keeps onsets and frames", () => {
+  const { dir, trace, manifest } = makeFixture();
+  const plan = planAudio(trace, manifest, { baseDir: dir });
+  assert.equal(plan.errors.length, 0);
+  assert.equal(plan.loudness.enabled, true);
+  const silent = join(dir, "silent.mp4");
+  const durS = (Math.round(manifest.duration) / 1000).toFixed(3);
+  execFileSync(ffmpeg(), ["-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", `testsrc=duration=${durS}:size=320x240:rate=15`,
+    "-c:v", "libx264", "-pix_fmt", "yuv420p", silent], { stdio: "pipe" });
+  const out = join(dir, "final-loud.mp4");
+  const res = muxAudio({ videoFile: silent, plan, baseDir: dir, outFile: out });
+  assert.equal(res.audioCodec, "aac");
+  // Video untouched.
+  assert.deepEqual(videoFrameHashes(silent), videoFrameHashes(out));
+  // Loudness QA on the finished file.
+  const qa = qaAudio(plan, { outFile: out });
+  assert.equal(qa.metrics.loudnessNormalized, true);
+  assert.equal(qa.metrics.loudnessTargetLufs, -16);
+  const lufs = qa.metrics.loudnessIntegratedLufs;
+  const tp = qa.metrics.loudnessTruePeakDbTP;
+  assert.ok(lufs !== null && Math.abs(lufs - -16) <= 1.0, `integrated ${lufs} LUFS`);
+  assert.ok(tp !== null && tp <= -1.5, `true peak ${tp} dBTP`);
+  // Narration onsets unchanged by normalization.
+  assert.deepEqual(qa.metrics.narrationOnsetsMs, plan.narration.map((p) => p.startMs));
+  // No clipping: peak stays under the ceiling.
+  assert.ok(qa.metrics.maxVolumeDb === null || qa.metrics.maxVolumeDb < -1.0);
+});
+
+test("mux with normalization disabled ships the mix as-is", () => {
+  const { dir, trace, manifest } = makeFixture();
+  const t = structuredClone(trace);
+  t.audio!.loudness = { disabled: true };
+  const plan = planAudio(t, manifest, { baseDir: dir });
+  assert.equal(plan.errors.length, 0);
+  const silent = join(dir, "silent2.mp4");
+  const durS = (Math.round(manifest.duration) / 1000).toFixed(3);
+  execFileSync(ffmpeg(), ["-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", `testsrc=duration=${durS}:size=320x240:rate=15`,
+    "-c:v", "libx264", "-pix_fmt", "yuv420p", silent], { stdio: "pipe" });
+  const out = join(dir, "final-noloud.mp4");
+  muxAudio({ videoFile: silent, plan, baseDir: dir, outFile: out });
+  assert.deepEqual(videoFrameHashes(silent), videoFrameHashes(out));
+  const qa = qaAudio(plan, { outFile: out });
+  assert.equal(qa.metrics.loudnessNormalized, false);
+  assert.equal(qa.metrics.loudnessTargetLufs, null);
+  // The un-normalized fixture mix is quiet (tones at low gain); it must NOT
+  // have been lifted to -16 LUFS.
+  const lufs = qa.metrics.loudnessIntegratedLufs;
+  assert.ok(lufs !== null && lufs < -17, `disabled mix stayed quiet: ${lufs} LUFS`);
+});
+
+test("audio QA reports integrated LUFS and true peak", () => {
+  const { dir, trace, manifest } = makeFixture();
+  const plan = planAudio(trace, manifest, { baseDir: dir });
+  const silent = join(dir, "silent3.mp4");
+  const durS = (Math.round(manifest.duration) / 1000).toFixed(3);
+  execFileSync(ffmpeg(), ["-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", `testsrc=duration=${durS}:size=320x240:rate=15`,
+    "-c:v", "libx264", "-pix_fmt", "yuv420p", silent], { stdio: "pipe" });
+  const out = join(dir, "final-qa.mp4");
+  muxAudio({ videoFile: silent, plan, baseDir: dir, outFile: out });
+  const qa = qaAudio(plan, { outFile: out });
+  assert.ok(typeof qa.metrics.loudnessIntegratedLufs === "number");
+  assert.ok(typeof qa.metrics.loudnessTruePeakDbTP === "number");
+  // No subjective scores anywhere in the QA output.
+  const blob = JSON.stringify(qa);
+  assert.ok(!/quality|score|rating|pleasant/i.test(blob));
+});
+
+test("contradictory loudness config warns without failing", () => {
+  const { dir, trace, manifest } = makeFixture();
+  const t = structuredClone(trace);
+  t.audio!.loudness = { targetLUFS: -1, maxTruePeakDbTP: -1.5 };
+  const plan = planAudio(t, manifest, { baseDir: dir });
+  assert.equal(plan.errors.length, 0);
+  assert.ok(plan.warnings.some((w) => w.code === "LOUDNESS_TARGET_ABOVE_PEAK"));
 });
