@@ -66,6 +66,13 @@ export interface AgentCapabilities {
   /** Screenshots captured without the OS cursor baked in. */
   cursorFreeScreenshots: boolean;
   /**
+   * The agent can supply dense real-frame captures (per-frame scroll
+   * positions, per-character typing states, ...) with capture metadata, so
+   * TraceReel renders real page pixels instead of reconstructing them.
+   * Verified true for Muse (2026-09-29 full-demo POC).
+   */
+  denseRealFrames?: boolean;
+  /**
    * The agent can generate narration audio with its own TTS/voice capability
    * and hand TraceReel the finished clips. TraceReel itself never provides
    * TTS. For Muse this is true only where its TTS skill/tool actually exists.
@@ -94,6 +101,80 @@ export interface AgentState {
   transitionIn?: ReconstructionTransitionIn;
   /** Regions redacted from this state's screenshot before rendering. */
   redactions?: RedactionRegion[];
+  /**
+   * Real-frame capture metadata, supplied by the capturing agent when this
+   * state is a genuine captured browser state (not a placeholder). Consecutive
+   * states with `capture.dense` form a dense real-frame interval, which
+   * TraceReel renders directly — every page pixel comes from a real captured
+   * screenshot, never from scrollplan/NCC/B-strip reconstruction.
+   */
+  capture?: RealFrameCapture;
+}
+
+/**
+ * Provenance for one real captured frame, supplied by the capturing agent's
+ * browser adapter (Muse today; any managed-browser agent can implement the
+ * same protocol — see docs/TRACE_FORMAT.md).
+ */
+export interface RealFrameCapture {
+  /** 0-based capture order within the trace; must increase along the timeline. */
+  order: number;
+  /**
+   * INTENDED PLAYBACK timestamp in ms — synthetic output-timeline time, NOT
+   * wall-clock capture time. When every capture in a dense run carries a
+   * non-decreasing `timelineMs` (or legacy `t`), playback honors the spacing:
+   * frame i plays at timelineMs[i] - timelineMs[0]. When omitted, partial, or
+   * regressed, TraceReel spreads the enclosing action's duration uniformly
+   * instead (see denseRunFrameTimes).
+   *
+   * Physical capture latency MUST NOT be recorded here: a managed browser
+   * may take seconds to capture what plays back in milliseconds. Recording
+   * wall-clock capture times in this field would stretch the video to the
+   * capture duration. Use `capturedAt` for wall-clock provenance.
+   */
+  timelineMs?: number;
+  /**
+   * Legacy alias for `timelineMs`: explicit synthetic PLAYBACK time, kept
+   * for compatibility — prefer `timelineMs`. Redefined unambiguously: this
+   * is never wall-clock capture time. NEVER put physical screenshot
+   * timestamps here; use `capturedAt` for those.
+   */
+  t?: number;
+  /**
+   * Wall-clock time the screenshot was actually taken (ISO-8601 string or
+   * ms epoch). Provenance only — it NEVER affects timing, duration, or
+   * playback. This is where physical capture latency belongs.
+   */
+  capturedAt?: string | number;
+  /** Actual scrollX of the page at capture, in CSS px, when known. */
+  scrollX?: number;
+  /** Actual scrollY of the page at capture, in CSS px, when known. */
+  scrollY?: number;
+  /** Viewport the screenshot was captured at; should match the trace viewport. */
+  viewport?: TraceViewport;
+  /**
+   * Id of the action this capture belongs to (e.g. "scroll-1"), when known.
+   * Lets the agent associate dense captures with the action that produced
+   * them; TraceReel also infers this from from/to state links. When absent,
+   * normalization infers it as `link:<kind>:<fromId>><toId>` from the
+   * covering action — the inferred value only associates frames into runs,
+   * never affecting timing or visuals.
+   */
+  actionId?: string;
+  /**
+   * True when the page had settled at capture (paint complete, no loading
+   * indicators). Unsettled captures render as-is; the agent should recapture
+   * rather than expect TraceReel to wait.
+   */
+  settled?: boolean;
+  /**
+   * True when this state is one of many dense captures of continuous motion
+   * (a scroll, per-character typing, ...). Consecutive dense states form a
+   * real-frame interval: TraceReel plays them back-to-back with cuts and never
+   * invokes scrollplan, NCC displacement, B-strip reconstruction, synthetic
+   * document translation, or crossfades between them.
+   */
+  dense?: boolean;
 }
 
 /** Links an action to the states around it. */

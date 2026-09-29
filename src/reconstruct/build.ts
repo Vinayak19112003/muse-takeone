@@ -16,6 +16,13 @@ import { basename, dirname, join, resolve } from "node:path";
 import { curvedPath, resolveEasing } from "../motion.js";
 import { RECONSTRUCTION_DEFAULTS, resolveConfig } from "../config.js";
 import { applyRedactions } from "./redact.js";
+import {
+  denseRunEnclosingAction,
+  denseRunFrameTimes,
+  detectDenseRuns,
+  visualSourceForFrames,
+} from "./realframes.js";
+import type { DenseRun } from "./realframes.js";
 import type {
   CameraShot,
   FrameIndexEntry,
@@ -142,6 +149,12 @@ export interface ReconstructionFrame {
   transitionIn?: ReconstructionTransitionIn;
   /** Regions to redact (blur/solid/pixelate) in this frame before rendering. */
   redactions?: RedactionRegion[];
+  /**
+   * Real-frame capture metadata (Trace v1 AgentState.capture, propagated by
+   * adapters). Frames with `capture.dense` form dense real-frame intervals,
+   * rendered directly from real screenshots — never reconstructed.
+   */
+  capture?: import("../trace/types.js").RealFrameCapture;
 }
 
 /** One region to redact from a screenshot before rendering. */
@@ -217,6 +230,9 @@ const SAMPLE_DT = 1000 / 60; // 60Hz cursor samples, like a real capture
 const CUT_BREATHE_MS = 250; // let the cut's crossfade breathe before the cursor moves
 const DEFAULT_HOLD_NO_ACTIONS = 2600;
 const DEFAULT_CPM = 240;
+// Exported for the managed real-frame path (realframes.ts), which reuses the
+// same cursor/key event synthesis so both visual paths share one event model.
+export { SAMPLE_DT, CUT_BREATHE_MS, DEFAULT_HOLD_NO_ACTIONS, DEFAULT_CPM };
 
 const NEXT_FRAME_AFTER = {
   click: 200,
@@ -225,6 +241,8 @@ const NEXT_FRAME_AFTER = {
   hover: 200,
   wait: 120,
 } as const;
+// Exported for the managed real-frame path (realframes.ts).
+export { NEXT_FRAME_AFTER };
 
 /** Every known capture-source type. Kept in code so --require-source typos fail loudly. */
 export const RECONSTRUCTION_SOURCE_TYPES: ReconstructionSource["type"][] = [
@@ -234,8 +252,8 @@ export const RECONSTRUCTION_SOURCE_TYPES: ReconstructionSource["type"][] = [
   "manual-screenshots",
 ];
 
-/** Deterministic 0..1 hash: typing jitter must not change between runs. */
-function hash01(seed: number): number {
+/** Deterministic 0..1 hash: typing jitter must not change between runs. Exported for realframes.ts. */
+export function hash01(seed: number): number {
   let h = Math.imul(seed | 0, 2654435761);
   h ^= h >>> 15;
   h = Math.imul(h, 2246822519);
@@ -249,8 +267,11 @@ export interface GlideOptions {
   maxMs: number;
 }
 
-/** Eased cursor samples from `from` to `to` starting at `t0`. Returns the arrival time. */
-function glide(
+/**
+ * Eased cursor samples from `from` to `to` starting at `t0`. Returns the arrival time.
+ * Exported for the managed real-frame path (realframes.ts).
+ */
+export function glide(
   events: RecordedEvent[],
   from: Point,
   to: Point,
@@ -283,12 +304,16 @@ interface SynthesizedAction {
   scrollDurationMs?: number;
 }
 
+/** Re-exported for the managed real-frame path (realframes.ts). */
+export type { SynthesizedAction };
+
 /**
  * Synthesize the event stream for one frame's actions. The cursor starts where the
  * previous frame left it; between frames it stays put (no glide across a cut).
  * Returns the time after the final pause plus per-action timing for the cut.
+ * Exported for the managed real-frame path (realframes.ts).
  */
-function synthesizeFrameEvents(
+export function synthesizeFrameEvents(
   frame: ReconstructionFrame,
   frameIndex: number,
   frameStart: number,
@@ -375,7 +400,134 @@ export function buildReconstructionManifest(
   let t = 0;
   let prevLastAction: SynthesizedAction | null = null;
 
-  input.frames.forEach((frame, fi) => {
+  // Managed real-frame path (PRIMARY): detect dense runs up front. Every page
+  // pixel inside a run comes from a real captured screenshot — the run emits
+  // one manifest frame per capture with back-to-back cuts, and scrollplan,
+  // NCC displacement, B-strip reconstruction, synthetic document translation
+  // and crossfades are never invoked for it. Frames outside runs use the
+  // fallback reconstruction below, unchanged.
+  const runs = detectDenseRuns(input.frames);
+  const runByStart = new Map<number, DenseRun>(runs.map((r) => [r.start, r]));
+  const visualSource = visualSourceForFrames(input.frames);
+  const realFrameMode = runs.length > 0;
+  const fps = cfg.output.fps > 0 ? cfg.output.fps : 60;
+  const frameMs = 1000 / fps;
+
+  /**
+   * Emit one dense real-frame interval. Returns the run's last frame index;
+   * the main loop advances past it. Advances `t`, sets `prevLastAction`.
+   */
+  const emitDenseRun = (run: DenseRun): number => {
+    const runFrames = input.frames.slice(run.start, run.end + 1);
+    const n = runFrames.length;
+    const first = runFrames[0];
+    const actions = first.actions ?? [];
+    const enc = denseRunEnclosingAction(first);
+    const preActions = enc ? actions.slice(0, enc.index) : actions;
+    // Actions attached to later run frames (e.g. a hover whose `to` state
+    // follows the run) play after the run, in frame order. Nothing
+    // interleaves inside the run: its captures are the motion.
+    const laterActions = runFrames.slice(1).flatMap((rf) => rf.actions ?? []);
+    const postActions = [...(enc ? actions.slice(enc.index + 1) : []), ...laterActions];
+
+    // Actions before the enclosing one (e.g. cursor positioning) play first.
+    let rt = t + CUT_BREATHE_MS;
+    if (preActions.length) {
+      const synPre = synthesizeFrameEvents({ ...first, actions: preActions }, run.start, t, cursor, events, motion);
+      rt = synPre.endT;
+      prevLastAction = synPre.actions[synPre.actions.length - 1] ?? prevLastAction;
+    }
+
+    // Cursor rest position for the run (mirrors the fallback path's scroll/click/hover glide).
+    const encAction = enc?.action;
+    const ax = encAction && encAction.kind !== "wait" ? encAction.x : undefined;
+    const ay = encAction && encAction.kind !== "wait" ? encAction.y : undefined;
+    if (ax !== undefined && ay !== undefined && Math.hypot(ax - cursor.x, ay - cursor.y) >= 1) {
+      rt = glide(events, cursor, { x: ax, y: ay }, rt, motion);
+      cursor.x = ax;
+      cursor.y = ay;
+    }
+
+    // Playback duration: the enclosing action's declared duration when there
+    // is one, otherwise the captures play back in realtime.
+    let runDuration: number;
+    if (encAction?.kind === "scroll") {
+      runDuration = encAction.durationMs ?? 600;
+    } else if (encAction?.kind === "type") {
+      const chars = [...encAction.text].length;
+      runDuration = Math.max(n, chars, 1) * (60000 / (encAction.cpm ?? DEFAULT_CPM));
+    } else {
+      runDuration = n * frameMs;
+    }
+
+    // Transition into the run follows the normal rule — except the run's OWN
+    // scroll never synthesizes a slide: the run IS the scroll. On the primary
+    // real-frame path (this function only runs when dense runs exist, i.e.
+    // mode "native"), the implicit default between two real captured states
+    // is CUT — never an automatic crossfade. Explicit author transitions and
+    // the scrollplan-fallback slide above are preserved.
+    let transitionIn: FrameIndexEntry["transitionIn"] = first.transitionIn;
+    if (transitionIn === undefined && prevLastAction?.kind === "scroll") {
+      const dx = prevLastAction.scrollDx ?? 0;
+      const dy = prevLastAction.scrollDy ?? 0;
+      const durationMs = prevLastAction.scrollDurationMs;
+      if (dx !== 0 || dy !== 0) transitionIn = { kind: "slide", dx: -dx, dy: -dy, durationMs };
+    }
+    if (transitionIn === undefined) transitionIn = "cut";
+
+    const { times: frameTimes, runEnd: runFramesEnd } = denseRunFrameTimes(runFrames, rt, runDuration, frameMs);
+    runFrames.forEach((rf, i) => {
+      const ft = Math.round(frameTimes[i]);
+      frames.push({ t: ft, file: basename(rf.file), transitionIn: i === 0 ? transitionIn : "cut" });
+      // Seed one cursor sample at the cut so a worker starting mid-video has a position.
+      events.push({ type: "mouse", t: ft, x: Math.round(cursor.x), y: Math.round(cursor.y) });
+      if (rf.caption) {
+        const capEnd = i + 1 < n ? Math.round(frameTimes[i + 1]) : Math.round(runFramesEnd);
+        captions.push({ start: ft, end: capEnd, text: rf.caption });
+      }
+    });
+
+    // Action events for the run. A scroll contributes NO scroll event — the
+    // real frames are the motion. Key/click/hover events drive the key HUD,
+    // click ripples, and the TakeOne auto-camera.
+    if (encAction?.kind === "type") {
+      const show = encAction.showKeys ?? (encAction.sensitive ? false : true);
+      const chars = [...encAction.text];
+      chars.forEach((ch, i) => {
+        // Key i produced capture i+1, so it fires at that capture's time.
+        const kt = frameTimes[Math.min(i + 1, n - 1)];
+        events.push({ type: "key", t: Math.round(kt), key: ch, x: encAction.x, y: encAction.y, source: "type", show });
+      });
+    } else if (encAction?.kind === "click") {
+      const hold = encAction.clickHoldMs ?? 130;
+      events.push({ type: "mousedown", t: Math.round(rt), x: encAction.x, y: encAction.y, button: "left" });
+      events.push({ type: "mouseup", t: Math.round(rt + hold), x: encAction.x, y: encAction.y, button: "left" });
+    } else if (encAction?.kind === "hover") {
+      events.push({ type: "hover", t: Math.round(rt), x: encAction.x, y: encAction.y });
+    }
+
+    // Actions after the enclosing one play after the run.
+    let runEnd = runFramesEnd;
+    if (postActions.length) {
+      const synPost = synthesizeFrameEvents({ ...first, actions: postActions }, run.start, runEnd - CUT_BREATHE_MS, cursor, events, motion);
+      runEnd = synPost.endT;
+      prevLastAction = synPost.actions[synPost.actions.length - 1] ?? null;
+    } else {
+      // The enclosing action is consumed by the run: its scroll never leaks a
+      // slide transition into the following frame.
+      prevLastAction = null;
+    }
+    t = runEnd;
+    return run.end;
+  };
+
+  for (let fi = 0; fi < input.frames.length; fi++) {
+    const frame = input.frames[fi];
+    const run = runByStart.get(fi);
+    if (run !== undefined) {
+      fi = emitDenseRun(run);
+      continue;
+    }
     const isLast = fi === input.frames.length - 1;
     // How we arrive at this frame. A scroll at the end of the previous frame
     // becomes a true scroll transition: the visual scroll plays over the scroll's
@@ -383,6 +535,11 @@ export function buildReconstructionManifest(
     // content stays aligned and reads as one continuous page moving.
     // Content moves opposite the scroll gesture: scrolling down pushes the old
     // screenshot up while the new one enters from below.
+    // On the primary real-frame path (mode "native": dense runs exist), the
+    // implicit default between two real captured states is CUT — never an
+    // automatic crossfade. Explicit author transitions and the
+    // scrollplan-fallback slide below are preserved. The reconstructed
+    // fallback (mode "reconstructed") keeps its existing default behavior.
     let transitionIn: FrameIndexEntry["transitionIn"] = frame.transitionIn;
     if (transitionIn === undefined && prevLastAction?.kind === "scroll") {
       const dx = prevLastAction.scrollDx ?? 0;
@@ -390,6 +547,7 @@ export function buildReconstructionManifest(
       const durationMs = prevLastAction.scrollDurationMs;
       if (dx !== 0 || dy !== 0) transitionIn = { kind: "slide", dx: -dx, dy: -dy, durationMs };
     }
+    if (transitionIn === undefined && realFrameMode) transitionIn = "cut";
     frames.push({ t: Math.round(t), file: basename(frame.file), transitionIn });
     // Seed one cursor sample at the cut so a worker starting mid-video has a position.
     events.push({ type: "mouse", t: Math.round(t), x: Math.round(cursor.x), y: Math.round(cursor.y) });
@@ -412,13 +570,17 @@ export function buildReconstructionManifest(
       captions.push({ start: Math.round(t), end: Math.round(frameEnd), text: frame.caption });
     }
     t = frameEnd;
-  });
+  }
 
   events.sort((a, b) => a.t - b.t);
   const duration = Math.round(t);
   return {
     version: 1,
-    mode: "reconstructed",
+    // Dense real-frame intervals render with the TakeOne native camera
+    // (click-driven auto-zoom, proven by the managed-frame POCs); the
+    // fallback keeps the reconstructed shot planner.
+    mode: realFrameMode ? "native" : "reconstructed",
+    visualSource,
     source: input.source,
     createdAt: new Date().toISOString(),
     config: cfg,

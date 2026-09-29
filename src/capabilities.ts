@@ -29,6 +29,7 @@ export const MUSE_CAPABILITIES: AgentCapabilities = {
   hoverEvents: true,
   videoSegments: false,
   cursorFreeScreenshots: false,
+  denseRealFrames: true,
   narrationAudioGeneration: museTtsAvailable(),
   browserAudio: false,
 };
@@ -66,6 +67,7 @@ export const CAPABILITY_DESCRIPTIONS: Record<keyof AgentCapabilities, string> = 
   hoverEvents: "hover positions",
   videoSegments: "short real-motion clips (roadmap)",
   cursorFreeScreenshots: "screenshots captured without the OS cursor baked in",
+  denseRealFrames: "agent can supply dense real-frame captures with capture metadata (scroll positions, per-character states) so TraceReel renders real page pixels instead of reconstructing them",
   narrationAudioGeneration: "agent can generate narration audio with its own TTS/voice tool (TraceReel never provides TTS)",
   browserAudio: "genuine captured browser/system audio (never synthesized)",
 };

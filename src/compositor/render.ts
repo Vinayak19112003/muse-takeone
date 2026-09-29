@@ -275,13 +275,24 @@ async function openCompositorPage(browser: Browser, dir: string, setup: Record<s
  * attaches the resulting ScrollPlan to every instruction of that scroll.
  * Workers stay stateless: they just execute the serialized plan.
  */
-async function analyzeScrollPlans(
-  dir: string,
+export interface ScrollTransition {
+  aFile: string;
+  bFile: string;
+  dx: number;
+  dy: number;
+}
+
+/**
+ * Collect the unique timed-scroll transitions scrollplan must analyze.
+ * Dense real-frame intervals never appear here: they play as cuts
+ * (transitionIn "cut"), never as timed slides, so isScroll is never set for
+ * them. This is the exact predicate analyzeScrollPlans uses — kept as a pure
+ * function so tests can assert the dense path stays scrollplan-free.
+ */
+export function collectScrollTransitions(
   instructions: FrameInstruction[],
-  cfg: ScenarioConfig,
-  log: (msg: string) => void,
-): Promise<void> {
-  const scrolls = new Map<string, { aFile: string; bFile: string; dx: number; dy: number }>();
+): Map<string, ScrollTransition> {
+  const scrolls = new Map<string, ScrollTransition>();
   for (const ins of instructions) {
     if (ins.isScroll && ins.previousFile && ins.mix != null && ins.mix < 1) {
       const key = `${ins.previousFile}>${ins.file}`;
@@ -298,6 +309,16 @@ async function analyzeScrollPlans(
       }
     }
   }
+  return scrolls;
+}
+
+async function analyzeScrollPlans(
+  dir: string,
+  instructions: FrameInstruction[],
+  cfg: ScenarioConfig,
+  log: (msg: string) => void,
+): Promise<void> {
+  const scrolls = collectScrollTransitions(instructions);
   if (!scrolls.size) return;
   log(`Analyzing ${scrolls.size} scroll transition(s) for layer compositing...`);
   const browser = await chromium.launch({

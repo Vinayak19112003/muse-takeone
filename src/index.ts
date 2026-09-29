@@ -20,7 +20,7 @@ export {
 } from "./resolver.js";
 export { recordScenario, dryRunScenario, type RecordOptions, type RecordResult, type DryRunOptions, type DryRunResult } from "./runner/index.js";
 export { Session, type Target, type ClickOptions, type MoveOptions, type TypeOptions, type ScrollOptions, type ZoomOptions } from "./runner/session.js";
-export { renderRecording, type RenderOptions, type RenderResult } from "./compositor/render.js";
+export { renderRecording, collectScrollTransitions, type RenderOptions, type RenderResult, type ScrollTransition } from "./compositor/render.js";
 export { defaultConfig, resolveConfig, RECONSTRUCTION_DEFAULTS } from "./config.js";
 export * from "./types.js";
 export {
@@ -100,6 +100,23 @@ export {
 } from "./bundle.js";
 // Small TypeScript SDK: import { TraceBuilder } from "tracereel";
 export { TraceBuilder } from "./sdk.js";
+// Managed real-frame capture: validation, QA, and the scroll capture planner.
+export {
+  isDenseFrame,
+  detectDenseRuns,
+  visualSourceForFrames,
+  denseRunEnclosingAction,
+  validateRealFrameMetadata,
+  validateRealFrameSequence,
+  qaRealFrameCapture,
+  type DenseRun,
+  type RealFrameIssue,
+} from "./reconstruct/realframes.js";
+export {
+  planScrollCaptures,
+  TAKEONE_DEFAULT_EASING,
+  type ScrollCaptureTarget,
+} from "./reconstruct/scroll-capture-plan.js";
 export type {
   TraceBuilderOptions,
   StateOptions,

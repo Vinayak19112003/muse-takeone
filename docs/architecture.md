@@ -45,6 +45,12 @@ render:
 
 - `mode: "reconstructed"` marks manifests built from an action script. The render
   path branches on it (`planCameraKeys`, `makeCamAtOut` in `src/compositor/render.ts`).
+  Inputs containing at least one dense real-frame run build with
+  `mode: "native"` — the TakeOne click-driven auto-zoom camera path — because
+  every page pixel is already real.
+- `visualSource` (`"managed-real-frames"` | `"reconstructed-sparse"` | `"mixed"`)
+  records which visual path the frames selected. The CLI prints it after
+  reconstructing.
 - `frames[]`: one entry per screenshot — file, source-time `t`, `transitionIn`,
   caption range. Each frame names its **own** `previousFile`: workers are
   stateless and never depend on a sibling's output.
@@ -53,6 +59,38 @@ render:
   `scroll`/`hover` markers. Sorted by `t`; the compositor never invents motion.
 - `source`: provenance metadata, preserved verbatim. Declarative, not
   cryptographic — see `docs/limitations.md`.
+
+## Managed real-frame path — the primary visual path (`src/reconstruct/realframes.ts`)
+
+`buildReconstructionManifest` detects dense runs up front (`detectDenseRuns`:
+two or more consecutive states with `capture.dense`). A dense run emits one
+manifest frame per capture with back-to-back `cut` transitions — never a
+`slide` — and consumes its enclosing scroll/type/click/hover action:
+
+- **scroll run**: no `scroll` event is emitted and scrollplan is never invoked.
+  The real frames *are* the motion. Duration is the action's `durationMs`
+  (default 600), or the intended playback spacing when every capture carries a
+  non-decreasing `capture.timelineMs` (`denseRunFrameTimes`). `timelineMs`
+  is synthetic output time — wall-clock capture latency (`capturedAt`) never
+  changes video duration.
+- **type run**: one `key` event per character, timed at the capture each
+  character produced — drives the key HUD.
+- **click run**: `mousedown`/`mouseup` at the click point — drives ripples and
+  the auto-camera. **hover run**: a `hover` event at the hover point.
+
+Cursor positioning glides and actions attached to later run frames still play
+(before/after the run, respectively); nothing interleaves *inside* a run.
+States outside dense runs use the unchanged fallback reconstruction below, so
+existing Trace v1 inputs render exactly as before.
+
+On the primary path (`mode: "native"`, i.e. any manifest with dense runs),
+every manifest frame without an explicit `transitionIn` — and without a
+scrollplan-fallback scroll slide — is emitted as `"cut"`. The compositor
+gives cuts a zero-length transition window (`mix` is always null, the
+outgoing screenshot is never loaded), so two real captured states with no
+captured intermediates render as A, CUT, B — never as a crossfade. Explicit
+author transitions survive; the `mode: "reconstructed"` fallback keeps its
+existing default transitions.
 
 ## Event synthesis (`src/reconstruct/build.ts`)
 
