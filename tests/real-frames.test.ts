@@ -758,3 +758,88 @@ describe("direction-aware scroll validation", () => {
     assert.ok(codes([3000, 2500, 2000, 1500, 1000], -3000).includes("ENDPOINT_MISMATCH"));
   });
 });
+
+describe("direction-aware pre-render scroll validation", () => {
+  // These tests call the actual production validateRealFrameSequence(), not
+  // just the post-build QA — this is the function the CLI runs pre-render.
+  const dir = join(dirname(fileURLToPath(import.meta.url)), "fixtures/sequence-frames");
+  const files = ["f0.png", "f1.png", "f2.png", "f3.png", "f4.png"];
+  const seq = (ys: number[], attachScrollDy?: number) =>
+    files.map((file, i) => ({
+      file,
+      capture: { order: i, dense: true, scrollY: ys[i] },
+      ...(i === 0 && attachScrollDy !== undefined
+        ? { actions: [{ kind: "scroll", x: 640, y: 400, dx: 0, dy: attachScrollDy, durationMs: 600 }] }
+        : {}),
+    }));
+  const codes = async (ys: number[], attachScrollDy?: number, vopts: Record<string, unknown> = {}) => {
+    const vr = await validateRealFrameSequence(seq(ys, attachScrollDy), dir, {
+      viewportHeight: 800,
+      ...vopts,
+    });
+    assert.deepEqual(vr.errors, [], `unexpected errors: ${JSON.stringify(vr.errors)}`);
+    return vr.warnings.map((w) => w.code);
+  };
+
+  it("P1. upward real-frame sequence passes (direction from the scroll action)", () => {
+    // The CLI path resolves dy from the first frame's scroll action, the same
+    // way the pre-render loop in cli.ts slices dense runs.
+    return codes([3000, 2250, 1500, 750, 0], -3000).then((c) => {
+      assert.ok(!c.includes("NON_MONOTONIC_SCROLL"), `upward scroll must not warn: ${c}`);
+      assert.ok(!c.includes("LARGE_DISPLACEMENT"), `unexpected: ${c}`);
+    });
+  });
+
+  it("P2. downward real-frame sequence passes (direction inferred from endpoints)", () => {
+    return codes([0, 750, 1500, 2250, 3000]).then((c) => {
+      assert.ok(!c.includes("NON_MONOTONIC_SCROLL"), `unexpected: ${c}`);
+      assert.ok(!c.includes("LARGE_DISPLACEMENT"), `unexpected: ${c}`);
+    });
+  });
+
+  it("P3. upward sequence with a forward regression warns", () => {
+    return codes([3000, 2250, 2600, 750, 0], -3000).then((c) => {
+      assert.ok(c.includes("NON_MONOTONIC_SCROLL"), `expected forward-regression warning: ${c}`);
+    });
+  });
+
+  it("P4. downward sequence with a backward regression warns", () => {
+    return codes([0, 750, 1500, 1200, 3000], 3000).then((c) => {
+      assert.ok(c.includes("NON_MONOTONIC_SCROLL"), `expected backward-regression warning: ${c}`);
+    });
+  });
+
+  it("P5. large positive jump warns", () => {
+    return codes([0, 750, 1950, 2700, 3000]).then((c) => {
+      assert.ok(c.includes("LARGE_DISPLACEMENT"), `expected large-jump warning: ${c}`);
+    });
+  });
+
+  it("P6. large negative jump warns", () => {
+    return codes([3000, 2250, 1050, 300, 0]).then((c) => {
+      assert.ok(c.includes("LARGE_DISPLACEMENT"), `expected large-jump warning: ${c}`);
+    });
+  });
+
+  it("P7. zero-motion sequence stays valid even with a declared dy", () => {
+    return codes([1000, 1000, 1000, 1000, 1000], 3000).then((c) => {
+      assert.ok(!c.includes("NON_MONOTONIC_SCROLL"), `zero motion must not warn: ${c}`);
+      assert.ok(!c.includes("LARGE_DISPLACEMENT"), `unexpected: ${c}`);
+    });
+  });
+
+  it("P8. explicit scrollDy option overrides endpoint inference", () => {
+    // Monotonically increasing scrollY: endpoint inference says "down", no
+    // warning. Declaring scrollDy=-3000 says the scroll was upward, so the
+    // same frames warn.
+    const ys = [0, 750, 1500, 2250, 3000];
+    return codes(ys)
+      .then((c) => {
+        assert.ok(!c.includes("NON_MONOTONIC_SCROLL"), `inferred direction must pass: ${c}`);
+        return codes(ys, undefined, { scrollDy: -3000 });
+      })
+      .then((c) => {
+        assert.ok(c.includes("NON_MONOTONIC_SCROLL"), `explicit dy must override inference: ${c}`);
+      });
+  });
+});

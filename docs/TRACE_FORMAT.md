@@ -95,7 +95,7 @@ A state may carry exact browser captures in `capture` instead of (or in addition
 | `timelineMs` | no | **Intended playback** timestamp in ms — synthetic output-timeline time, **not** wall-clock capture time. When *every* capture in a run carries a non-decreasing `timelineMs`, playback honors the spacing: frame *i* plays at `timelineMs[i] − timelineMs[0]`. When omitted, partial, or regressed, the run spreads the enclosing action's duration uniformly instead (and QA warns). Physical capture latency must never be recorded here — it would stretch the video to the capture duration. |
 | `t` | no | Legacy alias for `timelineMs`: explicit synthetic playback time (never wall-clock). Prefer `timelineMs`. |
 | `capturedAt` | no | Wall-clock time the screenshot was actually taken (ISO-8601 string or ms epoch). Provenance only — never affects timing, duration, or playback. This is where physical capture latency belongs. |
-| `scrollX` / `scrollY` | no | Actual page scroll position at capture, in CSS px. Used for QA (monotonicity, endpoint agreement with the action's declared `dy`). |
+| `scrollX` / `scrollY` | no | Actual page scroll position at capture, in CSS px. Used for QA (direction-aware monotonicity — increasing for downward scrolls, decreasing for upward — endpoint agreement with the action's declared `dy`). |
 | `viewport` | no | Viewport the screenshot was captured at; must match the trace viewport. |
 | `actionId` | no | Id of the action that produced this capture (e.g. `"scroll-1"`). TraceReel also infers the association from `from`/`to` state links (`link:<kind>:<fromId>><toId>`). |
 | `settled` | no | `true` when the page had settled at capture (paint complete, no loading spinners). |

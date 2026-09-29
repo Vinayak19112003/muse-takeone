@@ -179,6 +179,28 @@ export interface RealFrameValidationOptions {
   skipBlankCheck?: boolean;
   /** Precomputed sha1 hashes of the frame files, aligned with `frames`. Enables duplicate detection without re-reading. */
   fileHashes?: (string | undefined)[];
+  /**
+   * Signed displacement (px) of the enclosing scroll action, when known.
+   * A nonzero value defines the expected scroll direction for the
+   * monotonicity check; when omitted or zero, direction is inferred from the
+   * sequence's own scrollY endpoints.
+   */
+  scrollDy?: number;
+}
+
+/**
+ * Expected scroll direction for a dense capture sequence: +1 = downward
+ * (scrollY increases), -1 = upward (scrollY decreases), 0 = no net motion.
+ * The enclosing scroll action's dy wins when nonzero; otherwise the
+ * direction is inferred from the first and last defined scrollY values.
+ * Zero-motion sequences are valid either way.
+ */
+export function scrollSequenceDirection(ys: (number | undefined)[], dy?: number): 1 | -1 | 0 {
+  if (dy !== undefined && dy !== 0) return dy > 0 ? 1 : -1;
+  const defined = ys.filter((y): y is number => y !== undefined);
+  if (defined.length < 2) return 0;
+  const net = defined[defined.length - 1] - defined[0];
+  return net > 0 ? 1 : net < 0 ? -1 : 0;
 }
 
 export interface RealFrameValidation {
@@ -205,6 +227,16 @@ export function validateRealFrameMetadata(
 
   const maxJumpPx = opts.maxJumpPx ?? opts.viewportHeight ?? 1080;
 
+  // Scroll progression is direction-aware: a downward scroll's scrollY
+  // increases, an upward scroll's decreases. The direction comes from the
+  // enclosing scroll action's dy when known, else from the sequence's own
+  // endpoints. Zero-motion sequences are valid either way.
+  const scrollDir = scrollSequenceDirection(
+    frames.map((f) => f.capture?.scrollY),
+    opts.scrollDy,
+  );
+  const dirName = scrollDir > 0 ? "downward" : "upward";
+
   let prevOrder: number | undefined;
   let prevScrollY: number | undefined;
   const seenFiles = new Map<string, number>();
@@ -219,10 +251,11 @@ export function validateRealFrameMetadata(
     if (c?.scrollY !== undefined) {
       if (prevScrollY !== undefined) {
         const d = c.scrollY - prevScrollY;
-        if (d < 0) {
-          warn("NON_MONOTONIC_SCROLL", `frame ${i} (${f.file}) scrollY goes ${prevScrollY} -> ${c.scrollY}; scroll metadata should not move backwards`, i);
-        } else if (d > maxJumpPx) {
-          warn("LARGE_DISPLACEMENT", `frame ${i} (${f.file}) jumps ${d}px (limit ${maxJumpPx}px); a capture may be missing — recapture the gap`, i);
+        const against = scrollDir === 1 ? d < 0 : scrollDir === -1 ? d > 0 : false;
+        if (against) {
+          warn("NON_MONOTONIC_SCROLL", `frame ${i} (${f.file}) scrollY goes ${prevScrollY} -> ${c.scrollY}, against the ${dirName} scroll; scroll metadata is suspect`, i);
+        } else if (Math.abs(d) > maxJumpPx) {
+          warn("LARGE_DISPLACEMENT", `frame ${i} (${f.file}) jumps ${Math.abs(d)}px (limit ${maxJumpPx}px); a capture may be missing — recapture the gap`, i);
         }
       }
       prevScrollY = c.scrollY;
@@ -360,7 +393,7 @@ export function sha1File(path: string): string {
  * errors/warnings so the agent can recapture the bad frames.
  */
 export async function validateRealFrameSequence(
-  frames: { file: string; capture?: RealFrameCapture }[],
+  frames: { file: string; capture?: RealFrameCapture; actions?: { kind: string; dy?: number }[] }[],
   baseDir: string,
   opts: RealFrameValidationOptions = {},
 ): Promise<RealFrameValidation> {
@@ -427,7 +460,12 @@ export async function validateRealFrameSequence(
     }
   }
 
-  const meta = validateRealFrameMetadata(frames, { ...opts, fileHashes: hashes });
+  // Direction comes from the enclosing scroll action's dy when the caller
+  // knows it (or attached it to the first frame); otherwise it is inferred
+  // from the sequence's own scrollY endpoints.
+  const scrollDy =
+    opts.scrollDy ?? frames[0]?.actions?.find((a) => a.kind === "scroll")?.dy;
+  const meta = validateRealFrameMetadata(frames, { ...opts, scrollDy, fileHashes: hashes });
   errors.push(...meta.errors);
   warnings.push(...meta.warnings);
 
@@ -516,23 +554,17 @@ export function qaRealFrameCapture(
 
     // Scroll runs: metadata should progress sensibly and reach the endpoint.
     // Direction-aware: a downward scroll's scrollY increases, an upward
-    // scroll's decreases. Direction comes from the enclosing scroll action's
-    // dy when available, else from the run's endpoints when they show clear
-    // movement. Jump sizes are checked by absolute delta in both directions.
+    // scroll's decreases — same rule as the pre-render validator, via the
+    // shared scrollSequenceDirection helper.
     const scrollYs = runFrames.map((f) => f.capture?.scrollY);
     if (scrollYs.every((y) => y !== undefined)) {
       const ys = scrollYs as number[];
-      const dy = enc?.action.kind === "scroll" ? (enc.action.dy ?? 0) : 0;
-      let dir: 1 | -1 | 0 = 0;
-      if (dy !== 0) dir = dy > 0 ? 1 : -1;
-      else {
-        const net = ys[ys.length - 1] - ys[0];
-        dir = net > 0 ? 1 : net < 0 ? -1 : 0;
-      }
+      const dir = scrollSequenceDirection(ys, enc?.action.kind === "scroll" ? enc.action.dy : undefined);
       const dirName = dir > 0 ? "downward" : "upward";
       for (let i = 1; i < ys.length; i++) {
         const delta = ys[i] - ys[i - 1];
-        if (dir !== 0 && delta !== 0 && Math.sign(delta) !== dir) {
+        const against = dir === 1 ? delta < 0 : dir === -1 ? delta > 0 : false;
+        if (against) {
           warn("NON_MONOTONIC_SCROLL", `dense run frames[${run.start}..${run.end}]: scrollY moves against the ${dirName} scroll ${ys[i - 1]} -> ${ys[i]} at run offset ${i}; capture metadata is suspect`);
           break;
         }
