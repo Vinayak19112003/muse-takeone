@@ -89,10 +89,12 @@ unaffected.
 Dense runs are only as good as the captures. TraceReel validates what it can
 and warns about the rest, but it cannot fix bad input:
 
-- **Capture timing is the agent's job.** Without `capture.t` on every capture,
+- **Capture timing is the agent's job.** Without `capture.timelineMs` on every capture,
   a run spreads the enclosing action's duration uniformly — fine for steady
   eased scrolls, wrong for irregular ones. Partial or regressed stamps fall
-  back to uniform with a QA warning; they are never fatal.
+  back to uniform with a QA warning; they are never fatal. `timelineMs` is
+  intended playback time, not wall-clock: physical capture latency belongs in
+  `capturedAt` and can never stretch the video.
 - **Missing or undecodable capture files are fatal** — a dense run with a hole
   cannot play. Duplicates (same file, or pixel-identical frames when the page
   legitimately did not move) are warnings, never errors.

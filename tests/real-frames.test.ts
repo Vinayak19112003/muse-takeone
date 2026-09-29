@@ -16,7 +16,8 @@
  * - real-frame intervals never use slides/crossfades
  * - every page pixel in a dense interval is a real captured screenshot
  * - harmless duplicate captures are warnings, not fatal
- * - explicit capture.t timestamps drive dense-run playback timing
+ * - explicit capture.timelineMs playback stamps drive dense-run timing;
+ *   wall-clock capturedAt provenance can never change video duration
  * - K. on the primary (native) path, two real states with no captured
  *   intermediates default to CUT — never an implicit crossfade
  * (H. audio is covered by the untouched tests/audio.test.ts suite.)
@@ -29,9 +30,12 @@ import { fileURLToPath } from "node:url";
 import { normalizeTrace } from "../src/adapters/index.js";
 import { statesToFrames, traceToReconstructionInput } from "../src/adapters/normalize.js";
 import { buildReconstructionManifest } from "../src/reconstruct/build.js";
+import type { ReconstructionFrame } from "../src/reconstruct/build.js";
 import {
+  denseRunEnclosingAction,
   denseRunFrameTimes,
   detectDenseRuns,
+  isBlankImage,
   qaRealFrameCapture,
   validateRealFrameSequence,
   visualSourceForFrames,
@@ -317,15 +321,15 @@ describe("managed real-frame capture", () => {
     assert.ok(s4.t - s0.t >= 600, `scroll run should last >= 600ms, got ${s4.t - s0.t}`);
   });
 
-  it("H1. explicit capture.t timestamps drive dense-run playback spacing", () => {
+  it("H1. explicit capture.timelineMs playback stamps drive dense-run spacing", () => {
     const { trace } = normalizeTrace(loadTrace(), { adapter: "generic" });
     const input = traceToReconstructionInput(trace);
     const run = detectDenseRuns(input.frames)[1]; // the scroll run
     const stamped = input.frames.map((f, i) => {
       if (i < run.start || i > run.end || !f.capture) return f;
-      // True capture spacing: bunched early, sparse late — nothing uniform.
-      const t = [0, 60, 90, 400, 600][i - run.start];
-      return { ...f, capture: { ...f.capture, t } };
+      // Intended playback spacing: bunched early, sparse late — nothing uniform.
+      const timelineMs = [0, 60, 90, 400, 600][i - run.start];
+      return { ...f, capture: { ...f.capture, timelineMs } };
     });
     const cfg = resolveConfig(RECONSTRUCTION_DEFAULTS);
     const manifest = buildReconstructionManifest({ ...input, frames: stamped }, cfg);
@@ -334,24 +338,24 @@ describe("managed real-frame capture", () => {
     const times = ["s_scroll00.png", "s_scroll07.png", "s_scroll14.png", "s_scroll21.png", "s_scroll29.png"]
       .map((file) => manifest.frames.find((f) => f.file === file)!.t - s0.t);
     assert.deepEqual(times, [0, 60, 90, 400, 600]);
-    assert.equal(s4.t - s0.t, 600); // run spans t[last] - t[0], not the 600ms action uniformly
+    assert.equal(s4.t - s0.t, 600); // run spans timelineMs[last] - timelineMs[0], not the 600ms action uniformly
     // No QA complaint about well-formed stamps.
     const warned = qaRealFrameCapture(stamped, manifest);
-    assert.ok(!warned.some((w) => w.code === "PARTIAL_CAPTURE_T" || w.code === "NON_MONOTONIC_CAPTURE_T"));
+    assert.ok(!warned.some((w) => w.code === "PARTIAL_TIMELINE" || w.code === "NON_MONOTONIC_TIMELINE"));
   });
 
-  it("H2. partial capture.t falls back to uniform timing and warns", () => {
+  it("H2. partial timelineMs falls back to uniform timing and warns", () => {
     const { trace } = normalizeTrace(loadTrace(), { adapter: "generic" });
     const input = traceToReconstructionInput(trace);
     const run = detectDenseRuns(input.frames)[1];
     const partial = input.frames.map((f, i) =>
       i >= run.start && i <= run.end && f.capture
-        ? { ...f, capture: { ...f.capture, t: (i - run.start) * 100 } }
+        ? { ...f, capture: { ...f.capture, timelineMs: (i - run.start) * 100 } }
         : f,
     );
     // Drop the stamp on one middle frame.
     const mid = run.start + 2;
-    partial[mid] = { ...partial[mid], capture: { ...partial[mid].capture!, t: undefined } };
+    partial[mid] = { ...partial[mid], capture: { ...partial[mid].capture!, timelineMs: undefined } };
     const cfg = resolveConfig(RECONSTRUCTION_DEFAULTS);
     const manifest = buildReconstructionManifest({ ...input, frames: partial }, cfg);
     const s0 = manifest.frames.find((f) => f.file === "s_scroll00.png")!;
@@ -361,17 +365,17 @@ describe("managed real-frame capture", () => {
     assert.equal(s1.t - s0.t, 150);
     assert.equal(s4.t - s0.t, 600);
     const warned = qaRealFrameCapture(partial, manifest);
-    assert.ok(warned.some((w) => w.code === "PARTIAL_CAPTURE_T"));
+    assert.ok(warned.some((w) => w.code === "PARTIAL_TIMELINE"));
   });
 
-  it("H3. regressed capture.t falls back to uniform timing and warns", () => {
+  it("H3. regressed timelineMs falls back to uniform timing and warns", () => {
     const { trace } = normalizeTrace(loadTrace(), { adapter: "generic" });
     const input = traceToReconstructionInput(trace);
     const run = detectDenseRuns(input.frames)[1];
     const regressed = input.frames.map((f, i) => {
       if (i < run.start || i > run.end || !f.capture) return f;
-      const t = [0, 100, 50, 300, 600][i - run.start]; // 50 < 100: regression
-      return { ...f, capture: { ...f.capture, t } };
+      const timelineMs = [0, 100, 50, 300, 600][i - run.start]; // 50 < 100: regression
+      return { ...f, capture: { ...f.capture, timelineMs } };
     });
     const cfg = resolveConfig(RECONSTRUCTION_DEFAULTS);
     const manifest = buildReconstructionManifest({ ...input, frames: regressed }, cfg);
@@ -379,13 +383,13 @@ describe("managed real-frame capture", () => {
     const s1 = manifest.frames.find((f) => f.file === "s_scroll07.png")!;
     assert.equal(s1.t - s0.t, 150); // uniform fallback, not the regressed stamps
     const warned = qaRealFrameCapture(regressed, manifest);
-    assert.ok(warned.some((w) => w.code === "NON_MONOTONIC_CAPTURE_T"));
+    assert.ok(warned.some((w) => w.code === "NON_MONOTONIC_TIMELINE"));
   });
 
   it("H4. denseRunFrameTimes unit: clamps sub-frame deltas, honors true spacing", () => {
-    const frames = [0, 5, 100, 300].map((t, i) => ({
+    const frames = [0, 5, 100, 300].map((timelineMs, i) => ({
       file: `f${i}.png`,
-      capture: { order: i, dense: true, t },
+      capture: { order: i, dense: true, timelineMs },
     })) as Parameters<typeof denseRunFrameTimes>[0];
     const { times, runEnd } = denseRunFrameTimes(frames, 1000, 900, 1000 / 60);
     // 5ms delta clamps to one output frame (16.67ms).
@@ -393,6 +397,74 @@ describe("managed real-frame capture", () => {
     assert.ok(Math.abs(times[2] - times[1] - 95) < 0.01);
     assert.ok(Math.abs(times[3] - times[2] - 200) < 0.01);
     assert.equal(runEnd, times[3]);
+  });
+
+  it("H6. legacy capture.t is still honored as explicit playback time", () => {
+    // Back-compat: `t` means synthetic playback time, exactly like timelineMs.
+    const frames = [0, 100, 300].map((t, i) => ({
+      file: `f${i}.png`,
+      capture: { order: i, dense: true, t },
+    })) as Parameters<typeof denseRunFrameTimes>[0];
+    const { times } = denseRunFrameTimes(frames, 500, 900, 1000 / 60);
+    assert.deepEqual(times.map((x) => Math.round(x)), [500, 600, 800]);
+    // timelineMs wins when both are present.
+    const both = [0, 100, 300].map((t, i) => ({
+      file: `f${i}.png`,
+      capture: { order: i, dense: true, t, timelineMs: t * 2 },
+    })) as Parameters<typeof denseRunFrameTimes>[0];
+    const r2 = denseRunFrameTimes(both, 500, 900, 1000 / 60);
+    assert.deepEqual(r2.times.map((x) => Math.round(x)), [500, 700, 1100]);
+  });
+
+  it("H5. physical capture latency (capturedAt) can never change video duration", () => {
+    // 37 screenshots physically captured 400ms apart — 14.4s of wall-clock
+    // capture latency — for a scroll whose desired playback is 600ms.
+    // capturedAt is provenance only: the run must play 600ms, not ~14s.
+    const N = 37;
+    const trace = {
+      version: 1,
+      source: { type: "agent-browser", agent: "muse" },
+      viewport: { width: 1280, height: 800 },
+      screenshotsDir: ".",
+      states: Array.from({ length: N }, (_, i) => ({
+        id: `s${i}`,
+        screenshot: `s${i}.png`,
+        capture: {
+          order: i,
+          dense: true,
+          capturedAt: new Date(Date.UTC(2026, 0, 1) + i * 400).toISOString(),
+          scrollY: Math.round((i / (N - 1)) * 3000),
+        },
+      })),
+      actions: [
+        { kind: "scroll", from: "s0", to: `s${N - 1}`, x: 640, y: 400, dx: 0, dy: 3000, durationMs: 600 },
+      ],
+    };
+    const { trace: nt } = normalizeTrace(trace, { adapter: "generic" });
+    const input = traceToReconstructionInput(nt);
+    const runs = detectDenseRuns(input.frames);
+    assert.equal(runs.length, 1, "one dense run");
+    const manifest = buildReconstructionManifest(input, resolveConfig(RECONSTRUCTION_DEFAULTS));
+    const first = manifest.frames[0];
+    const last = manifest.frames[N - 1];
+    assert.equal(last.t - first.t, 600, "14.4s of capture latency must not become 14.4s of video");
+    // And wall-clock provenance never triggers timeline QA.
+    const warned = qaRealFrameCapture(input.frames, manifest);
+    assert.ok(!warned.some((w) => w.code === "PARTIAL_TIMELINE" || w.code === "NON_MONOTONIC_TIMELINE"));
+
+    // When an explicit playback timeline IS supplied alongside capturedAt,
+    // the timeline wins and capturedAt is still ignored.
+    const { trace: nt2 } = normalizeTrace(trace, { adapter: "generic" });
+    const input2 = traceToReconstructionInput(nt2);
+    input2.frames.forEach((f, i) => {
+      if (f.capture) f.capture.timelineMs = (i / (N - 1)) * 1200;
+    });
+    const manifest2 = buildReconstructionManifest(input2, resolveConfig(RECONSTRUCTION_DEFAULTS));
+    assert.equal(
+      manifest2.frames[N - 1].t - manifest2.frames[0].t,
+      1200,
+      "explicit playback timeline wins over both the action duration and capturedAt",
+    );
   });
 });
 
@@ -502,5 +574,187 @@ describe("primary real-frame path: implicit CUT between real states", () => {
       if (f.file === "s_tooltip.png") continue;
       assert.equal(f.transitionIn, "cut", `${f.file}: implicit default stays cut`);
     }
+  });
+});
+
+describe("action-aware dense run splitting", () => {
+  const base = (states: Record<string, unknown>[], actions: Record<string, unknown>[]) => ({
+    version: 1,
+    source: { type: "agent-browser", agent: "muse" },
+    viewport: { width: 1280, height: 800 },
+    screenshotsDir: ".",
+    states,
+    actions,
+  });
+  const denseStates = (ids: string[], startOrder: number, extra: Record<string, unknown> = {}) =>
+    ids.map((id, k) => ({
+      id,
+      screenshot: `${id}.png`,
+      capture: { order: startOrder + k, dense: true, ...extra },
+    }));
+  const buildInput = (trace: unknown) => {
+    const { trace: t } = normalizeTrace(trace, { adapter: "generic" });
+    return traceToReconstructionInput(t);
+  };
+  const enclosingKinds = (input: { frames: ReconstructionFrame[] }) =>
+    detectDenseRuns(input.frames).map(
+      (r) => denseRunEnclosingAction(input.frames[r.start])?.action.kind,
+    );
+
+  it("L1. dense type immediately followed by dense scroll forms two runs", () => {
+    const input = buildInput(
+      base(
+        [
+          { id: "pre", screenshot: "pre.png" },
+          ...denseStates(["t1", "t2", "t3"], 0),
+          ...denseStates(["s1", "s2", "s3"], 3),
+        ],
+        [
+          { kind: "type", from: "pre", to: "t3", x: 640, y: 200, text: "abc", cpm: 6000 },
+          { kind: "scroll", from: "t3", to: "s3", x: 640, y: 400, dx: 0, dy: 900, durationMs: 600 },
+        ],
+      ),
+    );
+    const runs = detectDenseRuns(input.frames);
+    assert.equal(runs.length, 2, "type run and scroll run must not merge");
+    assert.deepEqual(
+      runs.map((r) => r.end - r.start + 1),
+      [3, 3],
+    );
+    assert.deepEqual(enclosingKinds(input), ["type", "scroll"], "each run keeps its own enclosing action");
+    // Each run gets its own timing and event synthesis.
+    const manifest = buildReconstructionManifest(input, resolveConfig(RECONSTRUCTION_DEFAULTS));
+    const keys = manifest.events.filter((e) => e.type === "key");
+    assert.equal(keys.length, 3, "type run emits one key event per character");
+    assert.deepEqual(keys.map((k) => (k as { key: string }).key), ["a", "b", "c"]);
+    const scrollFrames = manifest.frames.filter((f) => f.file.startsWith("s"));
+    assert.equal(scrollFrames.length, 3);
+    assert.equal(scrollFrames[2].t - scrollFrames[0].t, 600, "scroll run spans its own 600ms action");
+    assert.ok(!manifest.events.some((e) => e.type === "scroll"), "scroll run emits no scroll event");
+  });
+
+  it("L2. dense click immediately followed by dense hover forms two runs", () => {
+    const input = buildInput(
+      base(
+        [
+          { id: "pre", screenshot: "pre.png" },
+          ...denseStates(["c1", "c2"], 0),
+          ...denseStates(["h1", "h2"], 2),
+        ],
+        [
+          { kind: "click", from: "pre", to: "c2", x: 640, y: 400 },
+          { kind: "hover", from: "c2", to: "h2", x: 700, y: 450 },
+        ],
+      ),
+    );
+    const runs = detectDenseRuns(input.frames);
+    assert.equal(runs.length, 2, "click run and hover run must not merge");
+    assert.deepEqual(enclosingKinds(input), ["click", "hover"], "each run keeps its own enclosing action");
+    const manifest = buildReconstructionManifest(input, resolveConfig(RECONSTRUCTION_DEFAULTS));
+    const downs = manifest.events.filter((e) => e.type === "mousedown");
+    const ups = manifest.events.filter((e) => e.type === "mouseup");
+    assert.equal(downs.length, 1, "click run emits mousedown");
+    assert.equal(ups.length, 1, "click run emits mouseup");
+    const hovers = manifest.events.filter((e) => e.type === "hover");
+    assert.equal(hovers.length, 1, "hover run emits a hover event");
+  });
+
+  it("L3. two adjacent dense runs with different actionId values stay split", () => {
+    const input = buildInput(
+      base(
+        [
+          { id: "pre", screenshot: "pre.png" },
+          ...denseStates(["t1", "t2"], 0, { actionId: "type-a" }),
+          ...denseStates(["s1", "s2"], 2, { actionId: "scroll-b" }),
+        ],
+        [
+          { kind: "type", from: "pre", to: "t2", x: 640, y: 200, text: "hi", cpm: 6000 },
+          { kind: "scroll", from: "t2", to: "s2", x: 640, y: 400, dx: 0, dy: 500, durationMs: 600 },
+        ],
+      ),
+    );
+    const runs = detectDenseRuns(input.frames);
+    assert.equal(runs.length, 2, "different actionId values must split the runs");
+    assert.deepEqual(enclosingKinds(input), ["type", "scroll"], "each run keeps its own enclosing action");
+    // The explicit actionIds survive normalization untouched.
+    assert.deepEqual(
+      input.frames.filter((f) => f.capture?.dense).map((f) => f.capture!.actionId),
+      ["type-a", "type-a", "scroll-b", "scroll-b"],
+    );
+  });
+});
+
+describe("deterministic blank-image detection", () => {
+  const dir = join(dirname(fileURLToPath(import.meta.url)), "fixtures/blank-detection");
+  const normal = join(dirname(fileURLToPath(import.meta.url)), "fixtures/managed-real-frames/s_focus.png");
+
+  it("M1. pure black PNG is detected as blank", async () => {
+    assert.equal(await isBlankImage(join(dir, "black.png")), true);
+  });
+
+  it("M2. near-black threshold is deterministic", async () => {
+    assert.equal(await isBlankImage(join(dir, "gray10.png")), true, "luma 10 < 16 → blank");
+    assert.equal(await isBlankImage(join(dir, "gray20.png")), false, "luma 20 >= 16 → not blank");
+  });
+
+  it("M3. a normal screenshot is not blank", async () => {
+    assert.equal(await isBlankImage(normal), false);
+  });
+
+  it("M4. an undecodable file fails explicitly instead of silently passing", async () => {
+    await assert.rejects(isBlankImage(join(dir, "does-not-exist.png")), /blank-frame probe failed/);
+  });
+});
+
+describe("direction-aware scroll validation", () => {
+  // Fixture manifest viewport is 1919x992, so |jump| > 992 warns.
+  const { manifest } = build();
+  const scrollFrames = (ys: number[], dy: number): ReconstructionFrame[] =>
+    ys.map((scrollY, i) => ({
+      file: `s${i}.png`,
+      capture: { order: i, dense: true, scrollY },
+      actions: i === 0 ? [{ kind: "scroll", x: 960, y: 496, dx: 0, dy, durationMs: 600 }] : [],
+    })) as ReconstructionFrame[];
+  const codes = (ys: number[], dy: number) =>
+    qaRealFrameCapture(scrollFrames(ys, dy), manifest).map((w) => w.code);
+
+  it("N1. downward 3000px scroll passes", () => {
+    const c = codes([0, 750, 1500, 2250, 3000], 3000);
+    assert.ok(!c.includes("NON_MONOTONIC_SCROLL"), `unexpected: ${c}`);
+    assert.ok(!c.includes("LARGE_SCROLL_JUMP"), `unexpected: ${c}`);
+    assert.ok(!c.includes("ENDPOINT_MISMATCH"), `unexpected: ${c}`);
+  });
+
+  it("N2. upward 3000px scroll passes", () => {
+    const c = codes([3000, 2250, 1500, 750, 0], -3000);
+    assert.ok(!c.includes("NON_MONOTONIC_SCROLL"), `upward scroll must not warn: ${c}`);
+    assert.ok(!c.includes("LARGE_SCROLL_JUMP"), `unexpected: ${c}`);
+    assert.ok(!c.includes("ENDPOINT_MISMATCH"), `unexpected: ${c}`);
+  });
+
+  it("N3. downward run with a backward jump warns", () => {
+    const c = codes([0, 750, 1500, 1200, 3000], 3000);
+    assert.ok(c.includes("NON_MONOTONIC_SCROLL"), `expected backward-jump warning: ${c}`);
+  });
+
+  it("N4. upward run with a forward jump warns", () => {
+    const c = codes([3000, 2250, 1500, 1800, 0], -3000);
+    assert.ok(c.includes("NON_MONOTONIC_SCROLL"), `expected forward-jump warning: ${c}`);
+  });
+
+  it("N5. large positive jump warns", () => {
+    const c = codes([0, 750, 1950, 2700, 3000], 3000);
+    assert.ok(c.includes("LARGE_SCROLL_JUMP"), `expected large-jump warning: ${c}`);
+  });
+
+  it("N6. large negative jump warns", () => {
+    const c = codes([3000, 2250, 1050, 300, 0], -3000);
+    assert.ok(c.includes("LARGE_SCROLL_JUMP"), `expected large-jump warning: ${c}`);
+  });
+
+  it("N7. endpoint agreement works in both directions", () => {
+    // Declared dy=3000 but captures only cover 2000 → warn, either direction.
+    assert.ok(codes([0, 500, 1000, 1500, 2000], 3000).includes("ENDPOINT_MISMATCH"));
+    assert.ok(codes([3000, 2500, 2000, 1500, 1000], -3000).includes("ENDPOINT_MISMATCH"));
   });
 });

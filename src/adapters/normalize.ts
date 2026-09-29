@@ -5,7 +5,7 @@
  * states/actions (or legacy frames) the reconstruction engine renders
  * without knowing which agent produced them.
  */
-import type { AgentCapabilities, AgentState, TraceReelTrace } from "../trace/types.js";
+import type { AgentAction, AgentCapabilities, AgentState, TraceReelTrace } from "../trace/types.js";
 import type {
   ReconstructionAction,
   ReconstructionFrame,
@@ -25,6 +25,42 @@ export function asObject(input: unknown, what: string): Record<string, unknown> 
 }
 
 /** Convert the state-first form (states/actions) into the frame form the engine renders. */
+
+/** Action kinds whose dense captures form real-frame intervals. */
+const DENSE_ACTION_KINDS = new Set(["scroll", "type", "click", "hover"]);
+
+/**
+ * Infer which action a dense capture belongs to from the trace's from/to
+ * state links, when the author did not set `capture.actionId`.
+ *
+ * A dense-kind action covers the states from its `from` index through its
+ * `to` index (a missing `to` covers only the `from` state). A dense frame
+ * covered by several actions belongs to the one ending earliest — at a
+ * junction where action A ends on frame i and action B starts on frame i,
+ * frame i still belongs to A (it is A's result state), while frames after i
+ * belong to B. Ties break by trace order, so the result is deterministic.
+ *
+ * Returns a `link:<kind>:<fromId>><toId>` key, or undefined when no
+ * dense-kind action covers the frame. Generic: no agent-specific logic.
+ */
+function inferDenseLinkKey(
+  actions: readonly AgentAction[],
+  indexById: Map<string, number>,
+  stateIndex: number,
+): string | undefined {
+  let best: { toIdx: number; key: string } | undefined;
+  for (const a of actions) {
+    if (!DENSE_ACTION_KINDS.has(a.kind)) continue;
+    const fromIdx = indexById.get(a.from);
+    if (fromIdx === undefined || fromIdx > stateIndex) continue;
+    const toIdx = a.to === undefined ? fromIdx : indexById.get(a.to) ?? fromIdx;
+    if (toIdx < stateIndex) continue;
+    if (best === undefined || toIdx < best.toIdx) {
+      best = { toIdx, key: `link:${a.kind}:${a.from}>${a.to ?? ""}` };
+    }
+  }
+  return best?.key;
+}
 /**
  * Convert a Trace v1 states/actions trace into reconstruction frames.
  *
@@ -68,7 +104,18 @@ export function statesToFrames(trace: TraceReelTrace): ReconstructionFrame[] {
     );
   }
   // Style 2 -> style 1: move the run's enclosing action onto run[0].
-  const runs = detectDenseRuns(states.map((s) => ({ capture: s.capture })));
+  // Run detection is action-aware: dense frames whose action association
+  // differs (explicit capture.actionId, else inferred from from/to links)
+  // never merge into one run, so adjacent dense actions of different kinds
+  // each get their own run, enclosing action, timing, and event synthesis.
+  const indexById = new Map(states.map((s, i) => [s.id, i] as const));
+  const traceActions = trace.actions ?? [];
+  const denseActionKey = (idx: number): string | undefined =>
+    states[idx].capture?.actionId ?? inferDenseLinkKey(traceActions, indexById, idx);
+  const runs = detectDenseRuns(
+    states.map((s) => ({ capture: s.capture })),
+    denseActionKey,
+  );
   for (const run of runs) {
     if (run.start === 0) continue;
     const preLinked = linkedByState.get(states[run.start - 1].id) ?? [];
@@ -83,6 +130,20 @@ export function statesToFrames(trace: TraceReelTrace): ReconstructionFrame[] {
     const runLinked = linkedByState.get(states[run.start].id);
     if (runLinked) runLinked.unshift(moved);
     else linkedByState.set(states[run.start].id, [moved]);
+  }
+  // Backfill the inferred action association onto each dense capture that
+  // lacks an explicit actionId, so downstream run detection (build, QA)
+  // — which only sees frames, not from/to links — splits runs exactly the
+  // same way. The inferred key only associates frames into runs; it never
+  // affects timing or visuals.
+  for (const run of runs) {
+    for (let i = run.start; i <= run.end; i++) {
+      const cap = states[i].capture;
+      if (cap?.dense === true && cap.actionId === undefined) {
+        const key = inferDenseLinkKey(traceActions, indexById, i);
+        if (key !== undefined) cap.actionId = key;
+      }
+    }
   }
   return states.map((s): ReconstructionFrame => {
     const linked = linkedByState.get(s.id) ?? [];

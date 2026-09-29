@@ -120,13 +120,32 @@ export interface RealFrameCapture {
   /** 0-based capture order within the trace; must increase along the timeline. */
   order: number;
   /**
-   * Explicit capture timestamp in ms (any epoch — only deltas matter). When
-   * every capture in a dense run carries a non-decreasing `t`, playback
-   * honors the true capture spacing: frame i plays at t[i] - t[0]. When
-   * omitted, partial, or regressed, TraceReel spreads the enclosing action's
-   * duration uniformly instead (see denseRunFrameTimes).
+   * INTENDED PLAYBACK timestamp in ms — synthetic output-timeline time, NOT
+   * wall-clock capture time. When every capture in a dense run carries a
+   * non-decreasing `timelineMs` (or legacy `t`), playback honors the spacing:
+   * frame i plays at timelineMs[i] - timelineMs[0]. When omitted, partial, or
+   * regressed, TraceReel spreads the enclosing action's duration uniformly
+   * instead (see denseRunFrameTimes).
+   *
+   * Physical capture latency MUST NOT be recorded here: a managed browser
+   * may take seconds to capture what plays back in milliseconds. Recording
+   * wall-clock capture times in this field would stretch the video to the
+   * capture duration. Use `capturedAt` for wall-clock provenance.
+   */
+  timelineMs?: number;
+  /**
+   * Legacy alias for `timelineMs`: explicit synthetic PLAYBACK time, kept
+   * for compatibility — prefer `timelineMs`. Redefined unambiguously: this
+   * is never wall-clock capture time. NEVER put physical screenshot
+   * timestamps here; use `capturedAt` for those.
    */
   t?: number;
+  /**
+   * Wall-clock time the screenshot was actually taken (ISO-8601 string or
+   * ms epoch). Provenance only — it NEVER affects timing, duration, or
+   * playback. This is where physical capture latency belongs.
+   */
+  capturedAt?: string | number;
   /** Actual scrollX of the page at capture, in CSS px, when known. */
   scrollX?: number;
   /** Actual scrollY of the page at capture, in CSS px, when known. */
@@ -136,7 +155,10 @@ export interface RealFrameCapture {
   /**
    * Id of the action this capture belongs to (e.g. "scroll-1"), when known.
    * Lets the agent associate dense captures with the action that produced
-   * them; TraceReel also infers this from from/to state links.
+   * them; TraceReel also infers this from from/to state links. When absent,
+   * normalization infers it as `link:<kind>:<fromId>><toId>` from the
+   * covering action — the inferred value only associates frames into runs,
+   * never affecting timing or visuals.
    */
   actionId?: string;
   /**

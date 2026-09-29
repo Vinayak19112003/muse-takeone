@@ -92,10 +92,12 @@ A state may carry exact browser captures in `capture` instead of (or in addition
 |---|---|---|
 | `dense` | yes (to join a run) | `true` marks this capture as part of a dense real-frame interval. Two or more consecutive dense captures form a run; a lone dense frame renders as an ordinary frame (and warns). |
 | `order` | yes | 0-based capture order within the trace; must increase along the timeline. |
-| `t` | no | Capture timestamp in ms (any epoch — only deltas matter). When *every* capture in a run carries a non-decreasing `t`, playback honors the true capture spacing: frame *i* plays at `t[i] − t[0]`. When omitted, partial, or regressed, the run spreads the enclosing action's duration uniformly instead (and QA warns). |
+| `timelineMs` | no | **Intended playback** timestamp in ms — synthetic output-timeline time, **not** wall-clock capture time. When *every* capture in a run carries a non-decreasing `timelineMs`, playback honors the spacing: frame *i* plays at `timelineMs[i] − timelineMs[0]`. When omitted, partial, or regressed, the run spreads the enclosing action's duration uniformly instead (and QA warns). Physical capture latency must never be recorded here — it would stretch the video to the capture duration. |
+| `t` | no | Legacy alias for `timelineMs`: explicit synthetic playback time (never wall-clock). Prefer `timelineMs`. |
+| `capturedAt` | no | Wall-clock time the screenshot was actually taken (ISO-8601 string or ms epoch). Provenance only — never affects timing, duration, or playback. This is where physical capture latency belongs. |
 | `scrollX` / `scrollY` | no | Actual page scroll position at capture, in CSS px. Used for QA (monotonicity, endpoint agreement with the action's declared `dy`). |
 | `viewport` | no | Viewport the screenshot was captured at; must match the trace viewport. |
-| `actionId` | no | Id of the action that produced this capture (e.g. `"scroll-1"`). TraceReel also infers the association from `from`/`to` state links. |
+| `actionId` | no | Id of the action that produced this capture (e.g. `"scroll-1"`). TraceReel also infers the association from `from`/`to` state links (`link:<kind>:<fromId>><toId>`). |
 | `settled` | no | `true` when the page had settled at capture (paint complete, no loading spinners). |
 
 The protocol is agent-neutral: any agent whose managed browser can capture per-frame screenshots and metadata can emit it. TraceReel never depends on adapter internals. The `muse` adapter is the first verified producer; declare `capabilities.denseRealFrames: true` when the agent can produce dense runs.
@@ -103,7 +105,8 @@ The protocol is agent-neutral: any agent whose managed browser can capture per-f
 Dense-run rules:
 
 - A dense run belongs to the first `scroll`/`type`/`click`/`hover` action on its first state (the *enclosing action*). An action authored as *pre-run state → final dense state* is canonicalized onto the run's first frame so a dense scroll never degrades into a sparse slide.
-- The run's duration: for `scroll`, the action's `durationMs` (default 600); for `type`, per-character timing from `cpm`; otherwise the captures play back in realtime. Explicit `capture.t` stamps override the spacing (see above).
+- Runs never span an action boundary: dense frames with different `capture.actionId` values form separate runs, and when `actionId` is absent TraceReel infers the association from `from`/`to` state links. Dense typing immediately followed by dense scrolling is two runs, each with its own enclosing action, timing, and event synthesis.
+- The run's duration: for `scroll`, the action's `durationMs` (default 600); for `type`, per-character timing from `cpm`; otherwise the captures play back in realtime. Explicit `capture.timelineMs` playback stamps override the spacing (see above) — they are intended output time, never wall-clock capture time (`capturedAt` is provenance only and never affects duration).
 - On the primary path (any manifest containing dense runs, i.e. `mode: "native"`), the implicit default transition between two real captured states is **CUT** — never an automatic crossfade. An explicitly authored `transitionIn` is still honored; the reconstructed fallback keeps its existing transitions.
 - A `scroll` action enclosing a dense run emits **no** scroll event — the real frames *are* the motion. `type` emits one key event per character (driving the key HUD), `click` emits mousedown/up (driving ripples), `hover` emits a hover event.
 - Validation (fatal): every dense capture's file must exist and decode; dimensions must match; `order` must be chronological. Harmless duplicates (identical file or pixel-identical frames when the page legitimately did not move) are warnings, not errors.

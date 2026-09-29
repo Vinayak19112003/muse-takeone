@@ -69,8 +69,10 @@ manifest frame per capture with back-to-back `cut` transitions — never a
 
 - **scroll run**: no `scroll` event is emitted and scrollplan is never invoked.
   The real frames *are* the motion. Duration is the action's `durationMs`
-  (default 600), or the true capture spacing when every capture carries a
-  non-decreasing `capture.t` (`denseRunFrameTimes`).
+  (default 600), or the intended playback spacing when every capture carries a
+  non-decreasing `capture.timelineMs` (`denseRunFrameTimes`). `timelineMs`
+  is synthetic output time — wall-clock capture latency (`capturedAt`) never
+  changes video duration.
 - **type run**: one `key` event per character, timed at the capture each
   character produced — drives the key HUD.
 - **click run**: `mousedown`/`mouseup` at the click point — drives ripples and

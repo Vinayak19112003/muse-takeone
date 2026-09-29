@@ -42,13 +42,35 @@ export function isDenseFrame(frame: { capture?: { dense?: boolean } | undefined 
 /**
  * Find maximal runs of 2+ consecutive dense frames. A lone dense frame is not
  * a run — it renders like any other frame.
+ *
+ * Runs never span an action boundary: consecutive dense frames whose action
+ * association differs (see `actionKey`) start a new run, so e.g. dense
+ * typing frames immediately followed by dense scroll frames form two runs,
+ * each with its own enclosing action, timing, and event synthesis.
+ *
+ * `actionKey` maps a frame index to the id of the action that produced the
+ * capture (e.g. `capture.actionId`, or an inferred `link:<kind>:<from>><to>`
+ * key). When either of two adjacent frames has no key, they merge — the
+ * boundary cannot be told apart, so the old grouping is preserved.
  */
-export function detectDenseRuns(frames: readonly { capture?: { dense?: boolean } | undefined }[]): DenseRun[] {
+export function detectDenseRuns(
+  frames: readonly { capture?: { dense?: boolean; actionId?: string } | undefined }[],
+  actionKey: (index: number) => string | undefined = (i) => frames[i].capture?.actionId,
+): DenseRun[] {
   const runs: DenseRun[] = [];
   let start = -1;
   for (let i = 0; i < frames.length; i++) {
     if (isDenseFrame(frames[i])) {
-      if (start < 0) start = i;
+      if (start < 0) {
+        start = i;
+      } else {
+        const prevKey = actionKey(i - 1);
+        const key = actionKey(i);
+        if (prevKey !== undefined && key !== undefined && key !== prevKey) {
+          if (i - start >= 2) runs.push({ start, end: i - 1 });
+          start = i;
+        }
+      }
     } else if (start >= 0) {
       if (i - start >= 2) runs.push({ start, end: i - 1 });
       start = -1;
@@ -69,17 +91,22 @@ export function visualSourceForFrames(frames: ReconstructionFrame[]): VisualSour
 /**
  * Per-frame playback times for a dense run.
  *
- * When every capture in the run carries an explicit `capture.t` timestamp and
- * the stamps are non-decreasing, playback honors the true capture spacing:
- * frame i starts at startMs + (t[i] - t[0]), clamped so no two frames are
- * closer than one output frame. The run then spans exactly t[last] - t[0],
- * mirroring the uniform fallback where the run spans the enclosing action's
- * duration from first to last frame.
+ * `capture.timelineMs` (legacy `capture.t`) is INTENDED PLAYBACK time —
+ * synthetic output-timeline time, never wall-clock capture time. When every
+ * capture in the run carries a non-decreasing stamp, playback honors the
+ * spacing: frame i starts at startMs + (timelineMs[i] - timelineMs[0]),
+ * clamped so no two frames are closer than one output frame. The run then
+ * spans exactly timelineMs[last] - timelineMs[0], mirroring the uniform
+ * fallback where the run spans the enclosing action's duration from first
+ * to last frame.
  *
  * Otherwise (no stamps, partial stamps, or a regression) the run spreads
- * `uniformRunDurationMs` evenly from first to last frame.
+ * `uniformRunDurationMs` evenly from first to last frame. This is what keeps
+ * physical capture latency out of the video: captures taken seconds apart in
+ * wall-clock time (`capturedAt`) but with no playback timeline play back
+ * across the enclosing action's desired duration.
  *
- * Only deltas matter: the epoch of capture.t is irrelevant.
+ * Only deltas matter: the epoch of the stamps is irrelevant.
  */
 export function denseRunFrameTimes(
   runFrames: ReconstructionFrame[],
@@ -94,7 +121,9 @@ export function denseRunFrameTimes(
     return { times, runEnd: startMs + uniformRunDurationMs };
   };
   if (n > 1) {
-    const ts = runFrames.map((f) => f.capture?.t);
+    // Playback timeline only. `capturedAt` (wall-clock provenance) is
+    // deliberately never read here — it must not affect video duration.
+    const ts = runFrames.map((f) => f.capture?.timelineMs ?? f.capture?.t);
     if (ts.every((t): t is number => typeof t === "number")) {
       const times = [startMs];
       for (let i = 1; i < n; i++) {
@@ -270,26 +299,52 @@ export function probeImageDimensions(path: string): { width: number; height: num
   return { width, height };
 }
 
-/** True when the frame is entirely (near-)black, via the ffmpeg blackdetect filter. */
+/**
+ * Max luma (0-255) a frame may have and still count as blank. A fully black
+ * frame has max 0; 16 leaves headroom for near-black compression noise while
+ * staying far below any real screenshot content. Deterministic: the same
+ * image always yields the same pixel stats.
+ */
+export const BLANK_MAX_LUMA = 16;
+
+/**
+ * True when the frame is entirely (near-)black.
+ *
+ * Decodes the single still image to raw grayscale pixels and checks the max
+ * luma — deterministic for one image. (The old ffmpeg `blackdetect=d=0.05`
+ * probe was duration-based: a PNG decodes as one ~0.04s frame, so ffmpeg
+ * could finish before the 0.05s black-duration requirement was ever met,
+ * making the result depend on filter timing instead of the pixels.)
+ *
+ * Throws on decode failure so callers report the error explicitly instead
+ * of silently treating an unreadable file as non-blank.
+ */
 export async function isBlankImage(path: string): Promise<boolean> {
-  const { spawn } = await import("node:child_process");
-  return new Promise<boolean>((resolvePromise) => {
-    const bin = resolveFfmpeg();
-    const proc = spawn(bin, [
-      "-hide_banner", "-v", "info", "-i", path,
-      "-vf", "blackdetect=d=0.05:pix_th=0.02",
-      "-f", "null", "-",
-    ]);
-    let stderr = "";
-    proc.stderr.on("data", (d) => { stderr += d.toString(); });
-    proc.on("error", () => resolvePromise(false));
-    proc.on("close", () => {
-      // blackdetect prints one line per black segment with start/end/duration.
-      // A fully black still image yields a segment covering the whole duration.
-      const m = /black_start:0\s+black_end:([\d.]+)\s+black_duration:([\d.]+)/.exec(stderr);
-      resolvePromise(m !== null && Number(m[2]) >= 0.04);
-    });
-  });
+  const { spawnSync } = await import("node:child_process");
+  const bin = resolveFfmpeg();
+  const proc = spawnSync(
+    bin,
+    [
+      "-hide_banner", "-v", "error", "-i", path,
+      "-vf", "scale=64:64,format=gray",
+      "-frames:v", "1", "-f", "rawvideo", "-",
+    ],
+    { maxBuffer: 1024 * 1024 },
+  );
+  if (proc.error) {
+    throw new Error(`blank-frame probe failed for ${path}: ${(proc.error as Error).message}`);
+  }
+  if (proc.status !== 0) {
+    const detail = (proc.stderr?.toString() ?? "").split("\n")[0];
+    throw new Error(`blank-frame probe failed for ${path}: ffmpeg exited ${proc.status}${detail ? `: ${detail}` : ""}`);
+  }
+  const px = proc.stdout as Buffer;
+  if (px.length === 0) {
+    throw new Error(`blank-frame probe returned no pixels for ${path}`);
+  }
+  let max = 0;
+  for (let i = 0; i < px.length; i++) if (px[i] > max) max = px[i];
+  return max < BLANK_MAX_LUMA;
 }
 
 export function sha1File(path: string): string {
@@ -442,33 +497,47 @@ export function qaRealFrameCapture(
       }
     }
 
-    // Capture timestamps: honored only when present on every capture and
+    // Playback timeline stamps: honored only when present on every capture and
     // non-decreasing; otherwise timing silently falls back to uniform, so a
-    // partial or regressed stamp set deserves a warning.
-    const tStamps = runFrames.map((f) => f.capture?.t);
+    // partial or regressed stamp set deserves a warning. `capturedAt`
+    // (wall-clock) is never a timing source and is not checked here.
+    const tStamps = runFrames.map((f) => f.capture?.timelineMs ?? f.capture?.t);
     const tCount = tStamps.filter((t) => typeof t === "number").length;
     if (tCount > 0 && tCount < n) {
-      warn("PARTIAL_CAPTURE_T", `dense run frames[${run.start}..${run.end}]: only ${tCount}/${n} captures carry capture.t; timing falls back to uniform — set capture.t on all captures or none`);
+      warn("PARTIAL_TIMELINE", `dense run frames[${run.start}..${run.end}]: only ${tCount}/${n} captures carry a playback timeline (timelineMs/t); timing falls back to uniform — set timelineMs on all captures or none`);
     } else if (tCount === n) {
       for (let i = 1; i < n; i++) {
         if (!((tStamps[i] as number) >= (tStamps[i - 1] as number))) {
-          warn("NON_MONOTONIC_CAPTURE_T", `dense run frames[${run.start}..${run.end}]: capture.t regresses ${(tStamps[i - 1] as number)} -> ${(tStamps[i] as number)} at run offset ${i}; timing falls back to uniform — captures must be chronological`);
+          warn("NON_MONOTONIC_TIMELINE", `dense run frames[${run.start}..${run.end}]: playback timeline regresses ${(tStamps[i - 1] as number)} -> ${(tStamps[i] as number)} at run offset ${i}; timing falls back to uniform — captures must be chronological`);
           break;
         }
       }
     }
 
     // Scroll runs: metadata should progress sensibly and reach the endpoint.
+    // Direction-aware: a downward scroll's scrollY increases, an upward
+    // scroll's decreases. Direction comes from the enclosing scroll action's
+    // dy when available, else from the run's endpoints when they show clear
+    // movement. Jump sizes are checked by absolute delta in both directions.
     const scrollYs = runFrames.map((f) => f.capture?.scrollY);
     if (scrollYs.every((y) => y !== undefined)) {
       const ys = scrollYs as number[];
+      const dy = enc?.action.kind === "scroll" ? (enc.action.dy ?? 0) : 0;
+      let dir: 1 | -1 | 0 = 0;
+      if (dy !== 0) dir = dy > 0 ? 1 : -1;
+      else {
+        const net = ys[ys.length - 1] - ys[0];
+        dir = net > 0 ? 1 : net < 0 ? -1 : 0;
+      }
+      const dirName = dir > 0 ? "downward" : "upward";
       for (let i = 1; i < ys.length; i++) {
-        if (ys[i] < ys[i - 1]) {
-          warn("NON_MONOTONIC_SCROLL", `dense run frames[${run.start}..${run.end}]: scrollY moves backwards ${ys[i - 1]} -> ${ys[i]} at run offset ${i}; capture metadata is suspect`);
+        const delta = ys[i] - ys[i - 1];
+        if (dir !== 0 && delta !== 0 && Math.sign(delta) !== dir) {
+          warn("NON_MONOTONIC_SCROLL", `dense run frames[${run.start}..${run.end}]: scrollY moves against the ${dirName} scroll ${ys[i - 1]} -> ${ys[i]} at run offset ${i}; capture metadata is suspect`);
           break;
         }
-        if (ys[i] - ys[i - 1] > vh) {
-          warn("LARGE_SCROLL_JUMP", `dense run frames[${run.start}..${run.end}]: scrollY jumps ${ys[i] - ys[i - 1]}px (> viewport height ${vh}) at run offset ${i}; a capture is probably missing`);
+        if (Math.abs(delta) > vh) {
+          warn("LARGE_SCROLL_JUMP", `dense run frames[${run.start}..${run.end}]: scrollY jumps ${delta}px (|delta| > viewport height ${vh}) at run offset ${i}; a capture is probably missing`);
         }
       }
       if (enc?.action.kind === "scroll") {
