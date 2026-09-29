@@ -10,6 +10,7 @@
 import { existsSync } from "node:fs";
 import { basename, isAbsolute, resolve } from "node:path";
 import { RECONSTRUCTION_SOURCE_TYPES } from "./build.js";
+import { isDenseFrame } from "./realframes.js";
 import type { ReconstructionInput } from "./build.js";
 
 export interface ValidationIssue {
@@ -395,7 +396,9 @@ export function validateReconstructionInput(input: unknown, baseDir: string): Va
 
       const actions = fr.actions as unknown;
       if (actions === undefined) {
-        if (fr.caption === undefined) warn("EMPTY_FRAME", `${where} has no actions and no caption: a pure ${(fr.holdMs as number) ?? 2600}ms hold. Add a caption or drop the frame.`, { path: where });
+        // Dense real-frame captures are sub-second motion cuts, never holds:
+        // the empty-frame heuristic does not apply to them.
+        if (fr.caption === undefined && !isDenseFrame(fr)) warn("EMPTY_FRAME", `${where} has no actions and no caption: a pure ${(fr.holdMs as number) ?? 2600}ms hold. Add a caption or drop the frame.`, { path: where });
         return;
       }
       const n = checkActions(actions, where);

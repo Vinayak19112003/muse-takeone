@@ -7,6 +7,7 @@
 import { planReconstructionCamera } from "./shots.js";
 import type { ReconstructionInput } from "./build.js";
 import type { RecordingManifest } from "../types.js";
+import { detectDenseRuns, qaRealFrameCapture } from "./realframes.js";
 
 export interface ReconstructionQaMetrics {
   durationMs: number;
@@ -26,7 +27,7 @@ export interface ReconstructionQaMetrics {
 }
 
 /** Warning buckets. No global quality score: counts per bucket are the signal. */
-export type QaWarningCategory = "camera" | "timing" | "missing-state" | "viewport" | "other";
+export type QaWarningCategory = "camera" | "timing" | "missing-state" | "viewport" | "real-frames" | "other";
 
 export interface CategorizedWarning {
   category: QaWarningCategory;
@@ -46,6 +47,7 @@ const emptyCounts = (): Record<QaWarningCategory, number> => ({
   timing: 0,
   "missing-state": 0,
   viewport: 0,
+  "real-frames": 0,
   other: 0,
 });
 
@@ -166,9 +168,15 @@ export function qaReconstruction(input: ReconstructionInput, manifest: Recording
   });
 
   // Very short states: a frame with actions that is on screen for less than a
-  // beat — the viewer never settles before the cut.
+  // beat — the viewer never settles before the cut. Dense real frames are
+  // exempt: their short dwell IS the motion.
+  const denseIdx = new Set<number>();
+  for (const r of detectDenseRuns(input.frames)) {
+    for (let i = r.start; i <= r.end; i++) denseIdx.add(i);
+  }
   input.frames.forEach((f, fi) => {
     if (fi >= frames.length - 1) return;
+    if (denseIdx.has(fi)) return;
     const visibleMs = frames[fi + 1].t - frames[fi].t;
     const nActions = (f.actions ?? []).length;
     if (nActions > 0 && visibleMs < 700) {
@@ -186,6 +194,9 @@ export function qaReconstruction(input: ReconstructionInput, manifest: Recording
   const frameMs = 1000 / fps;
   input.frames.forEach((f, fi) => {
     if (fi >= frames.length - 1) return;
+    // Dense real-frame intervals are the visual scroll: the slide-transition
+    // continuity checks below do not apply to them.
+    if (denseIdx.has(fi) && denseIdx.has(fi + 1)) return;
     const actions = f.actions ?? [];
     const last = actions[actions.length - 1];
     if (!last || last.kind !== "scroll") return;
@@ -236,6 +247,13 @@ export function qaReconstruction(input: ReconstructionInput, manifest: Recording
       `the video ends on a ${lastMeaningful.kind} whose result is never shown: ` +
         `capture the post-action screenshot and append it as a final state`,
     );
+  }
+
+  // Managed real-frame capture QA: missing captures, dimension/provenance
+  // mismatches, non-monotonic scroll metadata, large displacements,
+  // duplicates, endpoint mismatches, insufficient dense frames.
+  for (const w of qaRealFrameCapture(input.frames, manifest)) {
+    categorized.push(w);
   }
 
   const warningCounts = emptyCounts();

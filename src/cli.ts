@@ -478,6 +478,36 @@ sharedOpts(
       return;
     }
     checkRequireSource(o.requireSource, loaded.trace, engineInput, loaded.rawSourceType);
+    // Managed real-frame path: validate dense capture sequences before
+    // building. Bad captures fail loudly so the agent recaptures them —
+    // TraceReel never repairs page pixels synthetically.
+    {
+      const { detectDenseRuns, validateRealFrameSequence, visualSourceForFrames } =
+        await import("./reconstruct/realframes.js");
+      const runs = detectDenseRuns(engineInput.frames);
+      if (runs.length) {
+        const shotsDir = resolve(baseDir, engineInput.screenshotsDir ?? ".");
+        let failed = false;
+        for (const run of runs) {
+          const seq = engineInput.frames.slice(run.start, run.end + 1);
+          const vr = await validateRealFrameSequence(seq, shotsDir, {
+            viewportHeight: engineInput.viewport.height,
+          });
+          for (const w of vr.warnings) log(`warning: real-frames ${w.code}: ${w.message}`);
+          for (const e of vr.errors) {
+            log(`error: real-frames ${e.code}: ${e.message}`);
+            failed = true;
+          }
+        }
+        if (failed) {
+          log(`reconstruct failed: real-frame validation failed; recapture the flagged frames`);
+          process.exitCode = 1;
+          return;
+        }
+      }
+      const vs = visualSourceForFrames(engineInput.frames);
+      log(`Visual source: ${vs === "managed-real-frames" ? "managed real frames" : vs === "mixed" ? "mixed (managed real frames + reconstructed sparse states)" : "reconstructed sparse states"}`);
+    }
     const { manifest } = writeReconstructionDir({ input: engineInput, baseDir, workDir, config: parseOverrides(o), log });
     const outFile = resolve(o.out ?? join(baseDir, "reconstruct-output.mp4"));
     if (outFile === inputPath) {
@@ -496,7 +526,7 @@ sharedOpts(
     log(`QA: ${formatQaMetrics(qa.metrics)}`);
     log(`QA warnings: ${formatWarningCounts(qa.warningCounts)}`);
     for (const w of qa.categorized) log(`QA warning [${w.category}]: ${w.message}`);
-    console.log(JSON.stringify({ video: res.outFile, keyframes: res.contactSheet, durationMs: res.durationMs, frames: manifest.frames.length, qa: qa.metrics, qaWarnings: qa.warnings }, null, 2));
+    console.log(JSON.stringify({ video: res.outFile, keyframes: res.contactSheet, durationMs: res.durationMs, frames: manifest.frames.length, visualSource: manifest.visualSource, qa: qa.metrics, qaWarnings: qa.warnings }, null, 2));
   } catch (e) {
     log(`reconstruct failed: ${(e as Error).message}`);
     process.exitCode = 1;

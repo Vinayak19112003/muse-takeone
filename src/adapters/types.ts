@@ -4,6 +4,16 @@
  * An adapter normalizes one agent's trace dialect into TraceReel Trace v1.
  * The reconstruction engine and renderer only ever see the normalized trace,
  * so supporting a new agent means writing an adapter — never touching core.
+ *
+ * Managed real-frame protocol (agent-neutral): any adapter may supply dense
+ * real-frame captures by attaching `capture` metadata to states
+ * (see RealFrameCapture in trace/types.ts): capture order, output timestamp,
+ * viewport, actual scrollX/scrollY when known, the action id when known, and
+ * `dense: true` for captures that form a continuous-motion interval. Adapters
+ * MUST preserve `states[].capture` verbatim through normalization — it is
+ * what selects the managed real-frame visual path. TraceReel never requires
+ * Muse specifically: Muse is the first verified adapter; Grokbot or any
+ * future browser agent implements the same protocol.
  */
 import type { AgentCapabilities, TraceReelTrace } from "../trace/types.js";
 import type { ValidationResult } from "../reconstruct/validate.js";

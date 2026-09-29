@@ -345,6 +345,18 @@ export interface CameraShot {
 export type RecordingMode = "native" | "reconstructed";
 
 /**
+ * Which visual path produced a manifest's page pixels. Explicit and
+ * inspectable — TraceReel never silently switches between paths.
+ */
+export type VisualSource =
+  /** Every page pixel comes from a real captured screenshot (dense real-frame intervals). */
+  | "managed-real-frames"
+  /** Sparse screenshots plus synthetic transitions (the fallback path). */
+  | "reconstructed-sparse"
+  /** Some intervals are real frames, others reconstructed. */
+  | "mixed";
+
+/**
  * Where reconstruction screenshots were captured. This is provenance metadata only:
  * TakeOne cannot cryptographically prove a PNG's source, but recording it here makes
  * an accidental capture fallback detectable in the manifest and in agent logs.
@@ -394,6 +406,19 @@ export interface RecordingManifest {
    * settled shots that each cover several related interactions.
    */
   mode?: RecordingMode;
+  /**
+   * Which visual path produced this manifest's page pixels. Explicit and
+   * inspectable — TraceReel never silently switches between paths:
+   * - "managed-real-frames": every page pixel comes from a real captured
+   *   screenshot (dense real-frame intervals; scrollplan/NCC/B-strip and
+   *   synthetic document translation are never invoked for these intervals).
+   * - "reconstructed-sparse": sparse screenshots plus synthetic transitions
+   *   (the fallback path; existing behavior, unchanged).
+   * - "mixed": some intervals are real frames, others reconstructed.
+   * Optional for backwards compatibility; `tracereel reconstruct` always sets
+   * it and prints it as "Visual source: ...".
+   */
+  visualSource?: VisualSource;
   /**
    * Capture provenance for reconstructed recordings. Preserved verbatim from the
    * reconstruction input; never affects rendering, only documents where the

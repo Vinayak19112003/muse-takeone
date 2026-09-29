@@ -13,6 +13,7 @@ import type {
 } from "../reconstruct/build.js";
 import type { NormalizedTrace } from "./types.js";
 import { TraceReelError } from "./types.js";
+import { detectDenseRuns } from "../reconstruct/realframes.js";
 
 export function asObject(input: unknown, what: string): Record<string, unknown> {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -24,6 +25,19 @@ export function asObject(input: unknown, what: string): Record<string, unknown> 
 }
 
 /** Convert the state-first form (states/actions) into the frame form the engine renders. */
+/**
+ * Convert a Trace v1 states/actions trace into reconstruction frames.
+ *
+ * Dense real-frame canonicalization: a scroll/type/click/hover action whose
+ * `from` is the state immediately before a dense run and whose `to` is the
+ * run's last state *is* the run's enclosing action — it is moved onto the
+ * run's first frame so the builder consumes it as the run's timing source
+ * instead of synthesizing a slide transition for it. (Trace authors naturally
+ * write `from: <state-before-scroll> -> to: <last-scroll-state>`; the builder
+ * expects the action on the run's first frame. Both authoring styles produce
+ * identical frames.) Only actions whose `to` matches the run's last state
+ * move; everything else keeps its frame.
+ */
 export function statesToFrames(trace: TraceReelTrace): ReconstructionFrame[] {
   const states = trace.states ?? [];
   const actionsByFrom = new Map<string, NonNullable<TraceReelTrace["actions"]>>();
@@ -32,24 +46,55 @@ export function statesToFrames(trace: TraceReelTrace): ReconstructionFrame[] {
     list.push(a);
     actionsByFrom.set(a.from, list);
   }
-  return states.map((s): ReconstructionFrame => {
+  interface LinkedAction {
+    out: ReconstructionAction;
+    to?: string;
+  }
+  const linkedByState = new Map<string, LinkedAction[]>();
+  for (const s of states) {
     const group = actionsByFrom.get(s.id) ?? [];
-    const actions: ReconstructionAction[] = group.map((a) => {
-      const { from, to, stateDelayMs, ...rest } = a;
-      const out = { ...rest } as ReconstructionAction;
-      // The engine only honors nextFrameAfterMs on a frame's LAST action; the
-      // transition delay belongs to the action that leads to the next state.
-      if (to !== undefined && group.at(-1) === a && stateDelayMs !== undefined) {
-        (out as unknown as Record<string, unknown>).nextFrameAfterMs = stateDelayMs;
-      }
-      return out;
-    });
+    linkedByState.set(
+      s.id,
+      group.map((a) => {
+        const { from, to, stateDelayMs, ...rest } = a;
+        const out = { ...rest } as ReconstructionAction;
+        // The engine only honors nextFrameAfterMs on a frame's LAST action; the
+        // transition delay belongs to the action that leads to the next state.
+        if (to !== undefined && group.at(-1) === a && stateDelayMs !== undefined) {
+          (out as unknown as Record<string, unknown>).nextFrameAfterMs = stateDelayMs;
+        }
+        return { out, to };
+      }),
+    );
+  }
+  // Style 2 -> style 1: move the run's enclosing action onto run[0].
+  const runs = detectDenseRuns(states.map((s) => ({ capture: s.capture })));
+  for (const run of runs) {
+    if (run.start === 0) continue;
+    const preLinked = linkedByState.get(states[run.start - 1].id) ?? [];
+    const lastId = states[run.end].id;
+    const idx = preLinked.findIndex(
+      (l) =>
+        l.to === lastId &&
+        (l.out.kind === "scroll" || l.out.kind === "type" || l.out.kind === "click" || l.out.kind === "hover"),
+    );
+    if (idx < 0) continue;
+    const [moved] = preLinked.splice(idx, 1);
+    const runLinked = linkedByState.get(states[run.start].id);
+    if (runLinked) runLinked.unshift(moved);
+    else linkedByState.set(states[run.start].id, [moved]);
+  }
+  return states.map((s): ReconstructionFrame => {
+    const linked = linkedByState.get(s.id) ?? [];
     const frame: ReconstructionFrame = { file: s.screenshot };
     if (s.holdMs !== undefined) frame.holdMs = s.holdMs;
     if (s.caption !== undefined) frame.caption = s.caption;
     if (s.transitionIn !== undefined) frame.transitionIn = s.transitionIn;
     if (s.redactions !== undefined) frame.redactions = s.redactions;
-    if (actions.length) frame.actions = actions;
+    // Real-frame capture metadata survives normalization untouched: it is
+    // what selects the managed real-frame visual path (never reconstructed).
+    if (s.capture !== undefined) frame.capture = s.capture;
+    if (linked.length) frame.actions = linked.map((l) => l.out);
     return frame;
   });
 }
