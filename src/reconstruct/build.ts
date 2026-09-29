@@ -461,7 +461,11 @@ export function buildReconstructionManifest(
     }
 
     // Transition into the run follows the normal rule — except the run's OWN
-    // scroll never synthesizes a slide: the run IS the scroll.
+    // scroll never synthesizes a slide: the run IS the scroll. On the primary
+    // real-frame path (this function only runs when dense runs exist, i.e.
+    // mode "native"), the implicit default between two real captured states
+    // is CUT — never an automatic crossfade. Explicit author transitions and
+    // the scrollplan-fallback slide above are preserved.
     let transitionIn: FrameIndexEntry["transitionIn"] = first.transitionIn;
     if (transitionIn === undefined && prevLastAction?.kind === "scroll") {
       const dx = prevLastAction.scrollDx ?? 0;
@@ -469,6 +473,7 @@ export function buildReconstructionManifest(
       const durationMs = prevLastAction.scrollDurationMs;
       if (dx !== 0 || dy !== 0) transitionIn = { kind: "slide", dx: -dx, dy: -dy, durationMs };
     }
+    if (transitionIn === undefined) transitionIn = "cut";
 
     const { times: frameTimes, runEnd: runFramesEnd } = denseRunFrameTimes(runFrames, rt, runDuration, frameMs);
     runFrames.forEach((rf, i) => {
@@ -530,6 +535,11 @@ export function buildReconstructionManifest(
     // content stays aligned and reads as one continuous page moving.
     // Content moves opposite the scroll gesture: scrolling down pushes the old
     // screenshot up while the new one enters from below.
+    // On the primary real-frame path (mode "native": dense runs exist), the
+    // implicit default between two real captured states is CUT — never an
+    // automatic crossfade. Explicit author transitions and the
+    // scrollplan-fallback slide below are preserved. The reconstructed
+    // fallback (mode "reconstructed") keeps its existing default behavior.
     let transitionIn: FrameIndexEntry["transitionIn"] = frame.transitionIn;
     if (transitionIn === undefined && prevLastAction?.kind === "scroll") {
       const dx = prevLastAction.scrollDx ?? 0;
@@ -537,6 +547,7 @@ export function buildReconstructionManifest(
       const durationMs = prevLastAction.scrollDurationMs;
       if (dx !== 0 || dy !== 0) transitionIn = { kind: "slide", dx: -dx, dy: -dy, durationMs };
     }
+    if (transitionIn === undefined && realFrameMode) transitionIn = "cut";
     frames.push({ t: Math.round(t), file: basename(frame.file), transitionIn });
     // Seed one cursor sample at the cut so a worker starting mid-video has a position.
     events.push({ type: "mouse", t: Math.round(t), x: Math.round(cursor.x), y: Math.round(cursor.y) });

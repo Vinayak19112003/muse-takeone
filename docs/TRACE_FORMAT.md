@@ -104,6 +104,7 @@ Dense-run rules:
 
 - A dense run belongs to the first `scroll`/`type`/`click`/`hover` action on its first state (the *enclosing action*). An action authored as *pre-run state → final dense state* is canonicalized onto the run's first frame so a dense scroll never degrades into a sparse slide.
 - The run's duration: for `scroll`, the action's `durationMs` (default 600); for `type`, per-character timing from `cpm`; otherwise the captures play back in realtime. Explicit `capture.t` stamps override the spacing (see above).
+- On the primary path (any manifest containing dense runs, i.e. `mode: "native"`), the implicit default transition between two real captured states is **CUT** — never an automatic crossfade. An explicitly authored `transitionIn` is still honored; the reconstructed fallback keeps its existing transitions.
 - A `scroll` action enclosing a dense run emits **no** scroll event — the real frames *are* the motion. `type` emits one key event per character (driving the key HUD), `click` emits mousedown/up (driving ripples), `hover` emits a hover event.
 - Validation (fatal): every dense capture's file must exist and decode; dimensions must match; `order` must be chronological. Harmless duplicates (identical file or pixel-identical frames when the page legitimately did not move) are warnings, not errors.
 - Planning helper: `planScrollCaptures({ from, to, durationMs, fps })` emits deterministic per-output-frame capture targets along a cubic-bezier `(0.4, 0, 0.2, 1)` ease — the recommended plan for agents capturing dense scrolls.

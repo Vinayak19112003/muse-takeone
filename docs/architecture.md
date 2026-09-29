@@ -81,6 +81,15 @@ Cursor positioning glides and actions attached to later run frames still play
 States outside dense runs use the unchanged fallback reconstruction below, so
 existing Trace v1 inputs render exactly as before.
 
+On the primary path (`mode: "native"`, i.e. any manifest with dense runs),
+every manifest frame without an explicit `transitionIn` — and without a
+scrollplan-fallback scroll slide — is emitted as `"cut"`. The compositor
+gives cuts a zero-length transition window (`mix` is always null, the
+outgoing screenshot is never loaded), so two real captured states with no
+captured intermediates render as A, CUT, B — never as a crossfade. Explicit
+author transitions survive; the `mode: "reconstructed"` fallback keeps its
+existing default transitions.
+
 ## Event synthesis (`src/reconstruct/build.ts`)
 
 Each action becomes timestamped events on one timeline:

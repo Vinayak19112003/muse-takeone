@@ -17,6 +17,8 @@
  * - every page pixel in a dense interval is a real captured screenshot
  * - harmless duplicate captures are warnings, not fatal
  * - explicit capture.t timestamps drive dense-run playback timing
+ * - K. on the primary (native) path, two real states with no captured
+ *   intermediates default to CUT — never an implicit crossfade
  * (H. audio is covered by the untouched tests/audio.test.ts suite.)
  */
 import { describe, it } from "node:test";
@@ -391,5 +393,114 @@ describe("managed real-frame capture", () => {
     assert.ok(Math.abs(times[2] - times[1] - 95) < 0.01);
     assert.ok(Math.abs(times[3] - times[2] - 200) < 0.01);
     assert.equal(runEnd, times[3]);
+  });
+});
+
+describe("primary real-frame path: implicit CUT between real states", () => {
+  // Native-mode fixture: two sparse real states around a dense click run.
+  const nativeTrace = (extraStates: Record<string, unknown>[] = []) => ({
+    version: 1,
+    source: { type: "agent-browser", agent: "muse" },
+    viewport: { width: 1280, height: 800 },
+    screenshotsDir: ".",
+    states: [
+      { id: "a", screenshot: "s_focus.png" },
+      { id: "b", screenshot: "s_graceland_top.png", capture: { dense: true, order: 0 } },
+      { id: "c", screenshot: "s_hover_sugg.png", capture: { dense: true, order: 1 } },
+      { id: "d", screenshot: "s_memphis_top.png" },
+      ...extraStates,
+    ],
+    actions: [{ kind: "click", from: "b", to: "c", x: 640, y: 400 }],
+  });
+  const buildNative = (trace: unknown = nativeTrace()) => {
+    const { trace: t } = normalizeTrace(trace, { adapter: "generic" });
+    const input = traceToReconstructionInput(t);
+    return buildReconstructionManifest(input, resolveConfig(RECONSTRUCTION_DEFAULTS));
+  };
+
+  it("K1. real frame -> real frame defaults to cut on the primary path", () => {
+    const m = buildNative();
+    assert.equal(m.mode, "native");
+    assert.equal(m.visualSource, "mixed");
+    assert.deepEqual(
+      m.frames.map((f) => f.file),
+      ["s_focus.png", "s_graceland_top.png", "s_hover_sugg.png", "s_memphis_top.png"],
+    );
+    for (const f of m.frames) {
+      assert.equal(f.transitionIn, "cut", `${f.file}: primary-path default must be cut, never an implicit crossfade`);
+    }
+  });
+
+  it("K2. no implicit crossfade is generated: instructions never blend two screenshots", () => {
+    const m = buildNative();
+    for (const ins of instructionsFor(m)) {
+      assert.equal(ins.mix, null, `${ins.file}: cut frames must never blend`);
+      assert.equal(ins.previousFile, undefined, `${ins.file}: no outgoing screenshot may be loaded`);
+      assert.equal(ins.isScroll, undefined, `${ins.file}: no scroll transition on the primary path`);
+    }
+    assert.equal(collectScrollTransitions(instructionsFor(m)).size, 0);
+  });
+
+  it("K3. dense real-frame sequences keep internal cuts, files, and timing", () => {
+    const { input, manifest } = build();
+    assert.ok(detectDenseRuns(input.frames).length >= 1);
+    for (const r of detectDenseRuns(input.frames)) {
+      const inFiles = input.frames.slice(r.start, r.end + 1).map((f) => f.file);
+      const mFrames = manifest.frames.slice(r.start, r.end + 1);
+      assert.deepEqual(mFrames.map((f) => f.file), inFiles, "dense run renders exactly its captures");
+      for (const f of mFrames) assert.equal(f.transitionIn, "cut", `${f.file}: dense frames stay cuts`);
+      for (let i = 2; i < mFrames.length; i++) {
+        assert.equal(
+          mFrames[i].t - mFrames[i - 1].t,
+          mFrames[1].t - mFrames[0].t,
+          "uniform capture spacing preserved inside the run",
+        );
+      }
+    }
+  });
+
+  it("K4. reconstructed sparse traces keep existing transitions (no forced cut)", () => {
+    // Click-only sparse trace: the arrival frame keeps the legacy default
+    // (undefined => compositor crossfade), not a forced cut.
+    const clickTrace = {
+      ...nativeTrace(),
+      states: [
+        { id: "a", screenshot: "s_focus.png" },
+        { id: "b", screenshot: "s_graceland_top.png" },
+      ],
+      actions: [{ kind: "click", from: "a", to: "b", x: 640, y: 400 }],
+    };
+    const { trace: t } = normalizeTrace(clickTrace, { adapter: "generic" });
+    const m = buildReconstructionManifest(traceToReconstructionInput(t), resolveConfig(RECONSTRUCTION_DEFAULTS));
+    assert.equal(m.mode, "reconstructed");
+    assert.equal(m.visualSource, "reconstructed-sparse");
+    assert.equal(m.frames[1].transitionIn, undefined, "fallback default transition is untouched");
+
+    // Sparse scroll still synthesizes its slide into the scrollplan fallback.
+    const scrollTrace = {
+      ...nativeTrace(),
+      states: [
+        { id: "a", screenshot: "s_focus.png" },
+        { id: "b", screenshot: "s_graceland_top.png" },
+      ],
+      actions: [{ kind: "scroll", from: "a", to: "b", dx: 0, dy: 800, durationMs: 600, x: 640, y: 400 }],
+    };
+    const { trace: t2 } = normalizeTrace(scrollTrace, { adapter: "generic" });
+    const m2 = buildReconstructionManifest(traceToReconstructionInput(t2), resolveConfig(RECONSTRUCTION_DEFAULTS));
+    const ti = m2.frames[1].transitionIn;
+    assert.ok(typeof ti === "object" && ti.kind === "slide", "sparse scroll keeps its slide transition");
+  });
+
+  it("K5. explicit author transitions are preserved on the primary path, deterministically", () => {
+    const explicit = nativeTrace([{ id: "e", screenshot: "s_tooltip.png", transitionIn: "crossfade" }]);
+    const a = withoutCreatedAt(buildNative(explicit));
+    const b = withoutCreatedAt(buildNative(explicit));
+    assert.deepEqual(b, a, "explicit-transition manifests are deterministic");
+    const e = a.frames.find((f) => f.file === "s_tooltip.png")!;
+    assert.equal(e.transitionIn, "crossfade", "explicit author transition survives on the primary path");
+    for (const f of a.frames) {
+      if (f.file === "s_tooltip.png") continue;
+      assert.equal(f.transitionIn, "cut", `${f.file}: implicit default stays cut`);
+    }
   });
 });
